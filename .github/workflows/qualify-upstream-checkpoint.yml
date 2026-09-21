@@ -15,7 +15,8 @@ jobs:
       PYTHON_CPU_COUNT: '1'
       GRIT_DISABLE_MULTIPROCESSING: '1'
       GOMAXPROCS: '2'
-      GOMEMLIMIT: 1024MiB
+      GOMEMLIMIT: 1536MiB
+      SISO_LIMITS: step=16,preproc=2,scandeps=1,thread=8,cache=4
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,13 +50,14 @@ jobs:
             --log "$ROOT/build/logs/cloud-dryrun-memory.jsonl" \
             --max-build-mib 3072 --max-runtime-seconds 300 -- \
             third_party/siso/cipd/siso ninja -offline -n -C out/Default \
-            -local_jobs=1 -fs_state_compression_threads=1 -d explain chrome \
+            -local_jobs=1 -fs_state_compression_threads=1 chrome \
             > "$ROOT/build/reuse-qualification/cloud-dryrun.log" 2>&1
       - name: Retain bounded evidence in logs only
         if: always()
         run: |
           python3 - <<'PYTHON'
           import json
+          from collections import deque
           from pathlib import Path
           for name in ('cloud-gn-memory.jsonl', 'cloud-dryrun-memory.jsonl'):
               path = Path('build/logs') / name
@@ -64,7 +66,12 @@ jobs:
                   print(name, json.dumps({'peak_mib': max((r.get('build_mib', 0) for r in rows), default=0), 'last_samples': rows[-2:]}))
           path = Path('build/reuse-qualification/cloud-dryrun.log')
           if path.exists():
-              lines = path.read_text().splitlines()
-              print('dry_run_lines', len(lines))
-              print('\n'.join(lines[-50:]))
+              lines = deque(maxlen=50)
+              count = 0
+              with path.open(errors='replace') as stream:
+                  for line in stream:
+                      count += 1
+                      lines.append(line.rstrip()[:4000])
+              print('dry_run_lines', count)
+              print('\n'.join(lines))
           PYTHON
