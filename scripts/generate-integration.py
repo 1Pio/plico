@@ -3,6 +3,7 @@ import difflib
 import json
 import re
 import sys
+from glance_integration import add_glance
 
 root = Path(sys.argv[1]).resolve()
 src = root / 'build/src'
@@ -19,6 +20,10 @@ if not marker.exists():
     saved.mkdir(parents=True, exist_ok=True)
     marker.write_text(pin['platform_commit'] + '\n')
 changes = {}
+
+def original_text(name):
+    snapshot = saved / name
+    return (snapshot if snapshot.exists() else src / name).read_text()
 
 def edit(name, old, new):
     if name not in changes:
@@ -48,6 +53,8 @@ edit(name, '  defines = []\n  libs = []', '''  if (is_mac) {
       "//plico/native/browser_controller_mac.mm",
       "//plico/native/composer_view.cc",
       "//plico/native/composer_view.h",
+      "//plico/native/glance_controller.h",
+      "//plico/native/glance_controller_mac.mm",
       "//plico/native/navigator_view.cc",
       "//plico/native/navigator_view.h",
       "//plico/native/shortcuts.h",
@@ -64,7 +71,7 @@ changes[name] = (changes[name][:deps] + changes[name][deps:].replace(
     '  public_deps = [', '  public_deps = [\n    "//plico:core",\n    "//plico:tab_metadata",', 1))
 # Existing mac platform dependencies already live in an is_mac block.
 edit(name, '      "//chrome/browser:chrome_browser_application_mac",',
-     '      "//chrome/browser:chrome_browser_application_mac",\n      "//plico:event_dispatch",')
+     '      "//chrome/browser:chrome_browser_application_mac",\n      "//plico:event_dispatch",\n      "//plico:glance_bridge",')
 
 name = 'chrome/browser/ui/views/frame/browser_view.h'
 edit(name, 'class AccessibilityFocusHighlight;',
@@ -79,11 +86,49 @@ edit(name, '#include "chrome/browser/ui/views/frame/browser_view.h"', '''#includ
 
 #if BUILDFLAG(IS_MAC)
 #include "plico/native/browser_controller.h"
+#include "plico/native/shortcuts.h"
 #endif''')
 edit(name, 'BrowserView::~BrowserView() {', '''BrowserView::~BrowserView() {
 #if BUILDFLAG(IS_MAC)
   plico_controller_.reset();
 #endif''')
+edit(name, 'bool BrowserView::IsZenModeEnabled() const {', '''bool BrowserView::IsZenModeEnabled() const {
+#if BUILDFLAG(IS_MAC)
+  if (plico::shortcuts::Enabled() && GetIsNormalType() && GetSupportsTabStrip() &&
+      GetWidget() && !IsFullscreen()) return true;
+#endif''')
+for method in ('IsZenModeSideChromePinned', 'IsZenModeTopChromePinned'):
+    edit(name, f'bool BrowserView::{method}() const {{', f'''bool BrowserView::{method}() const {{
+#if BUILDFLAG(IS_MAC)
+  if (plico::shortcuts::Enabled() && GetIsNormalType()) return false;
+#endif''')
+edit(name, '  // Keep the top chrome visible while the omnibox is focused.', '''#if BUILDFLAG(IS_MAC)
+  // Normal plico windows reveal navigation through the navigator. Toolbar
+  // focus and anchored security/permission UI below still reveal their context.
+  if (plico::shortcuts::Enabled() && GetIsNormalType()) {
+    reveal_top = false;
+    reveal_side = false;
+  }
+#endif
+
+  // Keep the top chrome visible while the omnibox is focused.''')
+edit(name, '''  if (reveal_top) {
+    if (!zen_top_chrome_animation_.IsShowing()) {''', '''#if BUILDFLAG(IS_MAC)
+  if (plico::shortcuts::Enabled() && GetIsNormalType()) {
+    const double top = reveal_top ? 1.0 : 0.0;
+    if (zen_top_chrome_animation_.GetCurrentValue() != top) {
+      zen_top_chrome_animation_.Reset(top);
+      AnimationProgressed(&zen_top_chrome_animation_);
+    }
+    if (zen_side_chrome_animation_.GetCurrentValue() != 0.0) {
+      zen_side_chrome_animation_.Reset(0.0);
+      AnimationProgressed(&zen_side_chrome_animation_);
+    }
+    return;
+  }
+#endif
+  if (reveal_top) {
+    if (!zen_top_chrome_animation_.IsShowing()) {''')
 edit(name, '  initialized_ = true;\n}', '''  initialized_ = true;
 #if BUILDFLAG(IS_MAC)
   if (GetIsNormalType() && base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -247,7 +292,7 @@ edit(name, 'MAC_CREATOR_CODE=Cr24', 'MAC_CREATOR_CODE=Plco')
 edit(name, 'MAC_TEAM_ID=S4Q33XPHB4', 'MAC_TEAM_ID=')
 
 name = 'chrome/app/chromium_strings.grd'
-original = (src / name).read_text()
+original = original_text(name)
 for message in ('IDS_PRODUCT_NAME', 'IDS_SHORT_PRODUCT_NAME', 'IDS_APP_MENU_PRODUCT_NAME',
                 'IDS_HELPER_NAME', 'IDS_SHORT_HELPER_NAME'):
     blocks = re.findall(r'<message name="' + message + r'"[^>]*>.*?</message>', original, re.S)
@@ -267,7 +312,7 @@ edit(name, '"Helium Storage Key"', '"plico Storage Key"')
 edit(name, '"Helium"', '"plico"')
 
 name = 'chrome/browser/mac/sparkle_glue.mm'
-original = (src / name).read_text()
+original = original_text(name)
 start = original.index('VersionUpdaterSparkle::VersionUpdaterSparkle(Profile* profile)')
 end = original.index('VersionUpdaterSparkle::~VersionUpdaterSparkle()', start)
 edit(name, original[start:end], '''VersionUpdaterSparkle::VersionUpdaterSparkle(Profile* profile)
@@ -277,6 +322,8 @@ edit(name, original[start:end], '''VersionUpdaterSparkle::VersionUpdaterSparkle(
 }
 
 ''')
+
+add_glance(edit)
 
 destination.mkdir(parents=True, exist_ok=True)
 patch = []

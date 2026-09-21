@@ -28,6 +28,8 @@
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/web_contents.h"
 #include "plico/native/event_dispatch_mac.h"
+#include "plico/native/glance_bridge.h"
+#include "plico/native/glance_controller.h"
 #include "plico/native/composer_view.h"
 #include "plico/native/navigator_view.h"
 #include "plico/native/tab_metadata.h"
@@ -57,6 +59,8 @@ unsigned Modifiers(NSEvent* event) {
 }  // namespace
 
 BrowserController::BrowserController(BrowserView* view) : view_(view) {
+  RegisterGlance(this, base::BindRepeating(
+      &BrowserController::NavigateGlance, base::Unretained(this)));
   RebuildFromTabs();
   view_->browser()->tab_strip_model()->AddObserver(this);
   content::DevToolsAgentHost::AddObserver(this);
@@ -65,6 +69,8 @@ BrowserController::BrowserController(BrowserView* view) : view_(view) {
 }
 
 BrowserController::~BrowserController() {
+  UnregisterGlance(this);
+  glance_.reset();
   UnregisterEventHandler(this);
   content::DevToolsAgentHost::RemoveObserver(this);
   view_->browser()->tab_strip_model()->RemoveObserver(this);
@@ -95,6 +101,7 @@ void BrowserController::RebuildFromTabs() {
     auto* contents = tabs->GetWebContentsAt(i);
     const TabId id = Id(contents);
     auto& metadata = TabMetadata::Get(contents);
+    if (metadata.restored) ScheduleRestoreReconciliation();
     if (metadata.window && metadata.window != window) {
       metadata.slot = -1;
       metadata.last_in_stack = false;
@@ -123,6 +130,26 @@ void BrowserController::RebuildFromTabs() {
                 std::move(recent));
 }
 
+void BrowserController::ScheduleRestoreReconciliation() {
+  if (restore_pending_) return;
+  restore_pending_ = true;
+  // Chromium inserts a window's restored tabs synchronously once session data
+  // arrives. Reconcile after that insertion loop, not throughout the profile's
+  // asynchronous disk read: unrelated windows must keep their live edits.
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+      base::BindOnce(&BrowserController::FinishRestore, weak_.GetWeakPtr()));
+}
+
+void BrowserController::FinishRestore() {
+  auto* tabs = view_->browser()->tab_strip_model();
+  for (int i = 0; i < tabs->count(); ++i)
+    TabMetadata::Get(tabs->GetWebContentsAt(i)).restored = false;
+  restore_pending_ = false;
+  RebuildFromTabs();
+  if (auto* active = tabs->GetActiveWebContents()) RecordActivation(Id(active));
+  Refresh();
+}
+
 void BrowserController::SyncTabs(bool active_changed) {
   if (applying_) return;
   auto* tabs = view_->browser()->tab_strip_model();
@@ -134,7 +161,7 @@ void BrowserController::SyncTabs(bool active_changed) {
     present.insert(id);
     if (!known_.contains(id)) {
       auto* metadata = TabMetadata::FromWebContents(contents);
-      restored |= metadata && metadata->slot >= 0;
+      restored |= metadata && metadata->restored;
       model_.TabAdded(id);
     }
   }
@@ -143,18 +170,22 @@ void BrowserController::SyncTabs(bool active_changed) {
   if (restored) RebuildFromTabs();
   if (auto* active = tabs->GetActiveWebContents();
       active && (active_changed || !model_.active())) RecordActivation(Id(active));
+  Persist();
   Refresh();
 }
 
 void BrowserController::RecordActivation(TabId id) {
   if (auto* contents = Contents(id)) {
     model_.TabActivated(id);
+    if (restore_pending_) return;
     TabMetadata::Get(contents).activated_at = base::Time::Now().InMillisecondsFSinceUnixEpoch();
     Persist();
   }
 }
 
 void BrowserController::Persist() {
+  // Only a window receiving restored tabs defers writes until insertion ends.
+  if (restore_pending_) return;
   auto* service = SessionServiceFactory::GetForProfile(view_->GetProfile());
   const auto window = view_->browser()->GetSessionID();
   const auto& layout = model_.committed();
@@ -224,6 +255,16 @@ void BrowserController::ScheduleReveal() {
 }
 
 void BrowserController::Choose(TabId tab) { Apply(router_.PointerSelect(tab)); }
+bool BrowserController::NavigateGlance(NavigateParams* params,
+    base::WeakPtr<content::NavigationHandle>* result) {
+  auto* source = params->source_contents.get();
+  if (!source || (view_->browser()->tab_strip_model()->GetIndexOfWebContents(source) < 0 &&
+                  (!glance_ || !glance_->Owns(source)))) return false;
+  Cancel();
+  if (!glance_) glance_ = std::make_unique<GlanceController>(view_);
+  *result = glance_->Navigate(params);
+  return true;
+}
 void BrowserController::ChooseStack(int slot) {
   Apply(router_.PointerSelectStack(slot));
 }
@@ -252,6 +293,7 @@ std::vector<ComposerChoice> BrowserController::ComposerTabs() const {
 void BrowserController::OpenComposer(bool edit_current) {
   Cancel();
   CloseComposer(false);
+  router_.SetEditorOwnsInput(true);
   auto* active = view_->browser()->tab_strip_model()->GetActiveWebContents();
   composer_edit_tab_ = edit_current && active ? std::make_optional(Id(active)) : std::nullopt;
   ++composer_generation_;
@@ -461,6 +503,50 @@ void BrowserController::RefreshDebuggerStatus() {
 
 bool BrowserController::HandleNativeEvent(NSEvent* event) {
   auto* widget = view_->GetWidget();
+  if (event.type == NSEventTypeFlagsChanged &&
+      (!widget || NSApp.keyWindow != widget->GetNativeWindow().GetNativeNSWindow() ||
+       NSApp.keyWindow.attachedSheet)) {
+    // A composer, preview, sheet or other window can receive Command release.
+    // Keep the physical baseline current without arming an inactive navigator.
+    Cancel();
+    router_.SetEditorOwnsInput(true);
+    router_.ModifiersChanged(Modifiers(event), Now());
+    router_.SetEditorOwnsInput(false);
+    return false;
+  }
+  if (composer_widget_ && NSApp.keyWindow == composer_widget_->GetNativeWindow().GetNativeNSWindow()) {
+    if (event.type != NSEventTypeKeyDown || NSApp.keyWindow.attachedSheet) return false;
+    const auto key = ui::KeyboardCodeFromNSEvent(event);
+    const unsigned modifiers = Modifiers(event);
+    if (key == ui::VKEY_W && modifiers == kCommand) {
+      CloseComposer(true);
+      return true;
+    }
+    const int flags = ((modifiers & kCommand) ? ui::EF_COMMAND_DOWN : 0) |
+        ((modifiers & kControl) ? ui::EF_CONTROL_DOWN : 0) |
+        ((modifiers & kOption) ? ui::EF_ALT_DOWN : 0) |
+        ((modifiers & kShift) ? ui::EF_SHIFT_DOWN : 0);
+    auto* service = browser_shortcuts::BrowserShortcutServiceFactory::GetForProfile(view_->GetProfile());
+    for (const auto& [accelerator, command] : service->GetAcceleratorMap()) {
+      if (accelerator != ui::Accelerator(key, flags)) continue;
+      auto route = plico::shortcuts::Decode(command);
+      if (!route) continue;
+      if (route->action == Action::kNewDestination) {
+        if (composer_edit_tab_) OpenComposer(false);
+        else composer_view_->FocusInput();
+        return true;
+      }
+      if (route->action == Action::kEditURL) {
+        if (!event.isARepeat) OpenComposer(true);
+        return true;
+      }
+      if (route->action == Action::kCopyURL) {
+        chrome::CopyURL(view_->browser(), view_->browser()->tab_strip_model()->GetActiveWebContents());
+        return true;
+      }
+    }
+    return false;
+  }
   if (!widget || NSApp.keyWindow != widget->GetNativeWindow().GetNativeNSWindow()) return false;
   if (NSApp.keyWindow.attachedSheet) { Cancel(); return false; }
   if (event.type != NSEventTypeFlagsChanged && event.type != NSEventTypeKeyDown) return false;

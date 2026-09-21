@@ -1,0 +1,6 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Sandbox link source</title>
+<a id="link" href="state.html?title=Sandboxed%20preview">Preview from this frame</a>
+<p id="synthetic">Synthetic click control has not run.</p>
+<button id="untrusted" onclick="document.querySelector('#link').dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, altKey:true, button:0, detail:1})); document.querySelector('#synthetic').textContent='Synthetic click dispatched';">Untrusted Option-click control</button>

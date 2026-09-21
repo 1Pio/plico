@@ -24,11 +24,11 @@ restoration, isolation and upstream-update acceptance scenarios.
 | Build prerequisites and local Python environment | Installed |
 | Source retrieval | Pinned Git fallback completed; official lite archive returns HTTP 404 |
 | Pure navigation model and input routing | 18 host scenarios pass with ASan and UBSan |
-| Native build and UI | Upstream BrowserView object built; native source syntax checks pass; full baseline compiling; no running plico UI yet |
+| Native build and UI | Upstream BrowserView object built; native source syntax checks pass; integrated Plico build in progress; no running plico UI yet |
 | Modifier input, latch and MRU integration | Native source drafted and compiler-checked; runtime qualification pending |
 | Native stack view and persistence | Native source and session hooks drafted; runtime qualification pending |
 | Floating composer | Native source drafted and compiler-checked; runtime qualification pending |
-| Native Glance and promotion | Pending |
+| Native Glance and promotion | Native WebContents preview, same-instance promotion and trusted link routing drafted and compiler-checked; runtime qualification pending |
 | Per-tab debugger status and stop | Native status/stop source compiler-checked; attachment policy patch drafted; runtime qualification pending |
 | Shortcut editing and back-to-opener behavior | Editable bindings and capture suppression drafted; upstream back-to-opener found; runtime qualification pending |
 | Upstream update rehearsal | Pending |
@@ -57,6 +57,19 @@ preserves incremental output. Retained process start identities cover observed
 workers that create separate groups. Sampling runs once per second; this is a
 stop mechanism, not a kernel-enforced allocation cap or a sandbox for daemonizing
 programs.
+
+A subsequent guarded resource-generation run stopped at 6,561 MiB of build
+footprint, before system free memory fell below 64%. All owned workers exited
+and incremental output was retained. Siso's log confirmed one local job. The
+GRIT implementation still forks a copy of its parsed resource tree with one
+Python worker, so builds now set its supported
+`GRIT_DISABLE_MULTIPROCESSING=1`. Go's soft GC target is 1,536 MiB and Siso state
+compression uses one thread. The original limits remain unchanged. Stop records
+now include per-process executable paths and footprints, without command
+arguments. The nine guard tests and a real Siso environment probe pass. The
+interrupted components resource target then completed in 6.7 seconds under the
+same thresholds, with approximately 1.4 GiB maximum sampled build footprint.
+This does not establish a bound for every remaining build action.
 
 Nine low-memory process tests pass, covering normal exit, low-threshold stop,
 SIGINT/SIGTERM/SIGHUP cleanup, surviving detached workers, discovery failure, and
@@ -95,22 +108,50 @@ reveal timers. These results do not qualify native AppKit event delivery.
 
 ### Current integration evidence
 
-The generated downstream patch touches 25 upstream files. Applying and reversing
+The generated downstream patch touches 46 upstream files. Applying and reversing
 it on isolated snapshots passes. Three patch-runner regression scenarios verify
 idempotence, replacing a patch that drops old changes, and preserving local edits.
 This is patch validation, not the upstream-update rehearsal.
 
-Five native translation units pass serial syntax checks with the pinned Chromium
-compiler and generated baseline headers. The full app, generated Mojo/TypeScript
-changes, branding and Sparkle changes have not completed their integrated build.
-The staging UI remains behind `--plico-native-navigation`; the baseline source
-has not yet received the Plico patch. Existing browser profiles are untouched.
+Seven native translation units pass serial syntax checks with the pinned Chromium
+compiler and generated headers. The downstream patch is applied to the isolated
+source and GN has generated 32,360 targets. Regenerating the patch after applying
+it produces identical bytes. The full app, generated Mojo/TypeScript changes,
+branding and Sparkle changes have not completed their integrated build.
+The staging UI remains behind `--plico-native-navigation`; Glance link routing
+also needs `--enable-blink-features=PlicoGlance`. Existing browser profiles are
+untouched. A complete unmodified baseline build remains an open comparison gate.
+
+The native Glance draft retains normal popup checks and navigation parameters.
+A marked trusted Option-click travels explicitly from Blink to the browser;
+browser-owned frame sandbox flags are retained when creating the preview.
+Independent review caught an initiator-frame mismatch and a replacement path
+that lost asynchronous beforeunload completion. Both were corrected and
+re-reviewed. Promotion transfers the existing WebContents into the parent tab
+strip. This is source evidence; beforeunload, sandbox behavior, state-preserving
+promotion, native window focus and renderer integration still need real runtime
+tests.
+
+Plico's normal staging window uses Helium's hidden chrome layout without changing
+profile preferences. Security and permission surfaces can still reveal native
+chrome, while Glance retains an origin toolbar. Session metadata writes are
+deferred only in a window receiving explicitly marked restored tabs, until its
+synchronous insertion loop finishes. A profile-wide suppression was rejected
+because it could discard live edits in an unrelated window. Both paths require
+runtime proof.
 
 Independent review found and fixed stack-click commit bookkeeping, stale closed
 tab selection in the composer, and URL editing losing its original tab identity.
 The closed-target state now has no implicit replacement selection. The stack-click
 fix and remapped gesture modifier ownership have host regression coverage.
 Native composer behavior still requires execution in the actual browser.
+
+A second review caught profile-wide restore suppression, stale modifier state
+after composer dismissal, and Command+T retaining URL-edit mode. The fixes use
+window-local restore reconciliation, synchronize modifier changes received by
+child/other windows, and explicitly transition from URL editing to new search.
+The affected native units pass serial compiler checks and the follow-up source
+review found no new concrete defect. Native acceptance is still unexecuted.
 
 Hold, latch and MRU modes share a candidate and one commit operation. A candidate
 is never an actual page activation. Only the browser's activation acknowledgement

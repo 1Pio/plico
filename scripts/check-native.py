@@ -37,7 +37,11 @@ for token in tokens:
         next(tokens)
     elif token not in ("-MD", "-MMD", "-c", entry["file"]):
         base.append(token)
-base += ["-I" + str(root), "-fsyntax-only", "-ferror-limit=10"]
+# Read edited Plico headers before the last synchronized copy in build/src.
+# Chromium's command already contains -I../.., so appending this path silently
+# checks a mixture of current sources and stale generated headers.
+base[1:1] = ["-I" + str(root)]
+base += ["-fsyntax-only", "-ferror-limit=10"]
 if args.overlay:
     base[1:1] = ['-I' + str(args.overlay.resolve())]
 paths = args.files or [str(path.relative_to(root)) for path in sorted((root / "plico/native").glob("*"))

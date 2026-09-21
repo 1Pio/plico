@@ -37,6 +37,7 @@ void TabMetadata::Restore(content::WebContents* contents,
   const int order = value->FindInt("order").value_or(0);
   if (slot < -1 || slot >= 10 || order < 0) return;
   auto& data = Get(contents);
+  data.restored = true;
   data.slot = slot;
   data.order = order;
   data.last_in_stack = value->FindBool("last").value_or(false);

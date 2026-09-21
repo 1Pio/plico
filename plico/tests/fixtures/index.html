@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Plico qualification</title>
+<link rel="stylesheet" href="fixture.css">
+<h1>Plico qualification</h1>
+<p>Controlled local pages for native browser acceptance. No external resources.</p>
+<label>Page selection <input id="selection" value="Keep this page selection"></label>
+<nav>
+  <a id="state" href="state.html?title=Stateful%20preview">Stateful preview</a>
+  <a id="new-tab" target="_blank" href="state.html?title=Linked%20child">Linked child tab</a>
+  <a id="download" download="plico-fixture.txt" href="download.txt">Explicit download</a>
+  <a href="state.html?title=YouTube">YouTube fixture</a>
+  <a href="state.html?title=GitHub">GitHub fixture</a>
+  <a href="state.html?title=Cloudflare%20Dashboard">Cloudflare fixture</a>
+  <a href="state.html?title=Twitter">Twitter fixture</a>
+</nav>
+<h2>Frame restrictions</h2>
+<p>Option-click each frame's link using native input. A frame without popup
+permission must not gain a preview; a preview from the restricted frame must
+retain its sandbox after promotion.</p>
+<label>Popups denied<iframe id="denied" sandbox="allow-scripts" src="sandboxed.html"></iframe></label>
+<label>Popups allowed, sandbox inherited<iframe id="inherited" sandbox="allow-scripts allow-popups" src="sandboxed.html"></iframe></label>
+<label>Popups may escape (Plico conservatively retains restrictions)<iframe id="escape" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" src="sandboxed.html"></iframe></label>
+<pre id="probe"></pre>
+<script src="probe.js"></script>

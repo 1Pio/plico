@@ -21,7 +21,8 @@ class NSEvent;
 #endif
 
 class BrowserView;
-namespace content { class WebContents; }
+struct NavigateParams;
+namespace content { class WebContents; class NavigationHandle; }
 namespace views { class Widget; }
 namespace plico {
 class NavigatorView;
@@ -51,6 +52,8 @@ class BrowserController : public TabStripModelObserver,
  private:
   bool HandleNativeEvent(NSEvent* event);
   void RebuildFromTabs();
+  void ScheduleRestoreReconciliation();
+  void FinishRestore();
   void SyncTabs(bool active_changed);
   void Persist();
   void RecordActivation(TabId id);
@@ -65,6 +68,7 @@ class BrowserController : public TabStripModelObserver,
   void ScheduleDebuggerRefresh();
   void RefreshDebuggerStatus();
   void ToggleInspection(TabId id);
+  bool NavigateGlance(NavigateParams*, base::WeakPtr<content::NavigationHandle>*);
   TabId Id(content::WebContents* contents) const;
 
   raw_ptr<BrowserView> view_;
@@ -82,6 +86,8 @@ class BrowserController : public TabStripModelObserver,
   std::optional<TabId> debugger_tab_;
   bool debugger_blocked_ = false;
   bool debugger_refresh_pending_ = false;
+  std::unique_ptr<GlanceController> glance_;
+  bool restore_pending_ = false;
   base::OneShotTimer reveal_timer_;
   base::WeakPtrFactory<BrowserController> weak_{this};
 };

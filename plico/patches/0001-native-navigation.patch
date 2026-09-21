@@ -30,7 +30,7 @@
        ":global_keyboard_shortcuts_mac",
 --- a/chrome/browser/ui/BUILD.gn
 +++ b/chrome/browser/ui/BUILD.gn
-@@ -526,6 +526,18 @@
+@@ -526,6 +526,20 @@
      "tab_helpers.h",
    ]
  
@@ -40,6 +40,8 @@
 +      "//plico/native/browser_controller_mac.mm",
 +      "//plico/native/composer_view.cc",
 +      "//plico/native/composer_view.h",
++      "//plico/native/glance_controller.h",
++      "//plico/native/glance_controller_mac.mm",
 +      "//plico/native/navigator_view.cc",
 +      "//plico/native/navigator_view.h",
 +      "//plico/native/shortcuts.h",
@@ -49,7 +51,7 @@
    defines = []
    libs = []
  
-@@ -535,6 +547,8 @@
+@@ -535,6 +549,8 @@
    ]
  
    public_deps = [
@@ -58,11 +60,12 @@
      # WARNING WARNING WARNING
      # New dependencies outside of //chrome/browser should be added to
      # ui_public_dependencies.
-@@ -2402,6 +2416,7 @@
+@@ -2402,6 +2418,8 @@
      deps += [
        "//chrome/browser:app_controller_mac",
        "//chrome/browser:chrome_browser_application_mac",
 +      "//plico:event_dispatch",
++      "//plico:glance_bridge",
        "//chrome/browser:global_keyboard_shortcuts_mac",
        "//chrome/browser/mac",
        "//chrome/browser/renderer_host:delegate",
@@ -89,18 +92,19 @@
  
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
-@@ -3,6 +3,10 @@
+@@ -3,6 +3,11 @@
  // found in the LICENSE file.
  
  #include "chrome/browser/ui/views/frame/browser_view.h"
 +
 +#if BUILDFLAG(IS_MAC)
 +#include "plico/native/browser_controller.h"
++#include "plico/native/shortcuts.h"
 +#endif
  
  #include <stdint.h>
  
-@@ -1191,6 +1195,9 @@
+@@ -1191,6 +1196,9 @@
  }
  
  BrowserView::~BrowserView() {
@@ -110,7 +114,73 @@
    if (browser_shortcut_service_) {
      browser_shortcut_service_->RemoveObserver(this);
      browser_shortcut_service_ = nullptr;
-@@ -4776,6 +4783,9 @@
+@@ -1679,11 +1687,17 @@
+ }
+ 
+ bool BrowserView::IsZenModeSideChromePinned() const {
++#if BUILDFLAG(IS_MAC)
++  if (plico::shortcuts::Enabled() && GetIsNormalType()) return false;
++#endif
+   return zen_mode_enabled_ && browser_->GetProfile()->GetPrefs()->GetBoolean(
+                                   prefs::kHeliumZenModeSidebarPinned);
+ }
+ 
+ bool BrowserView::IsZenModeTopChromePinned() const {
++#if BUILDFLAG(IS_MAC)
++  if (plico::shortcuts::Enabled() && GetIsNormalType()) return false;
++#endif
+   return zen_mode_enabled_ && browser_->GetProfile()->GetPrefs()->GetBoolean(
+                                   prefs::kHeliumZenModeTopChromePinned);
+ }
+@@ -2014,6 +2028,15 @@
+     reveal_top = true;
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  // Normal plico windows reveal navigation through the navigator. Toolbar
++  // focus and anchored security/permission UI below still reveal their context.
++  if (plico::shortcuts::Enabled() && GetIsNormalType()) {
++    reveal_top = false;
++    reveal_side = false;
++  }
++#endif
++
+   // Keep the top chrome visible while the omnibox is focused.
+   const bool omnibox_focused = toolbar_ && toolbar_->location_bar_view() &&
+                                toolbar_->location_bar_view()->HasFocus();
+@@ -2039,6 +2062,20 @@
+     }
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  if (plico::shortcuts::Enabled() && GetIsNormalType()) {
++    const double top = reveal_top ? 1.0 : 0.0;
++    if (zen_top_chrome_animation_.GetCurrentValue() != top) {
++      zen_top_chrome_animation_.Reset(top);
++      AnimationProgressed(&zen_top_chrome_animation_);
++    }
++    if (zen_side_chrome_animation_.GetCurrentValue() != 0.0) {
++      zen_side_chrome_animation_.Reset(0.0);
++      AnimationProgressed(&zen_side_chrome_animation_);
++    }
++    return;
++  }
++#endif
+   if (reveal_top) {
+     if (!zen_top_chrome_animation_.IsShowing()) {
+       zen_top_chrome_animation_.Show();
+@@ -2075,6 +2112,10 @@
+ }
+ 
+ bool BrowserView::IsZenModeEnabled() const {
++#if BUILDFLAG(IS_MAC)
++  if (plico::shortcuts::Enabled() && GetIsNormalType() && GetSupportsTabStrip() &&
++      GetWidget() && !IsFullscreen()) return true;
++#endif
+   auto* controller = HeliumLayoutStateController::From(browser_);
+   return controller && controller->IsZenModeEnabled() && GetIsNormalType() &&
+          GetSupportsTabStrip() && GetWidget() && !IsFullscreen();
+@@ -4776,6 +4817,9 @@
  #endif  // IS_MAC
  
  void BrowserView::OnWidgetDestroying(views::Widget* widget) {
@@ -120,7 +190,7 @@
    DCHECK(widget_observation_.IsObservingSource(widget));
    widget_observation_.Reset();
    // Destroy any remaining WebContents early on. Doing so may result in
-@@ -4805,6 +4815,9 @@
+@@ -4805,6 +4849,9 @@
      }
    }
  
@@ -130,7 +200,7 @@
    // Collapse zen mode chrome when the window is deactivated.
    if (!active && zen_mode_enabled_) {
      UpdateZenModeReveal(/*reveal_top=*/false, /*reveal_side=*/false);
-@@ -4822,6 +4835,9 @@
+@@ -4822,6 +4869,9 @@
  void BrowserView::OnWidgetBoundsChanged(views::Widget* widget,
                                          const gfx::Rect& new_bounds) {
    TryNotifyWindowBoundsChanged(new_bounds);
@@ -140,7 +210,7 @@
  }
  
  void BrowserView::OnWindowBeginUserBoundsChange() {
-@@ -5839,6 +5855,12 @@
+@@ -5839,6 +5889,12 @@
        kBrowserDialogAnchorElementId, *this);
  
    initialized_ = true;
@@ -607,3 +677,365 @@
  }
  
  VersionUpdaterSparkle::~VersionUpdaterSparkle() = default;
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -2438,6 +2438,11 @@
+     // https://chromestatus.com/feature/5111042975465472
+     // <template patchfor> etc.
+     {
++      name: "PlicoGlance",
++      status: "experimental",
++      base_feature: "none",
++    },
++    {
+       name: "DocumentPatching",
+       status: "stable",
+     },
+--- a/third_party/blink/renderer/core/html/html_anchor_element.cc
++++ b/third_party/blink/renderer/core/html/html_anchor_element.cc
+@@ -371,6 +371,7 @@
+     ResourceRequest request,
+     NavigationPolicy navigation_policy,
+     bool is_trusted,
++    bool plico_glance,
+     base::TimeTicks platform_time_stamp,
+     KURL completed_url) {
+   LocalDOMWindow* window = GetDocument().domWindow();
+@@ -386,6 +387,7 @@
+   request.SetRequestContext(mojom::blink::RequestContextType::HYPERLINK);
+   FrameLoadRequest frame_request(window, request);
+   frame_request.SetNavigationPolicy(navigation_policy);
++  frame_request.SetPlicoGlance(plico_glance);
+   frame_request.SetClientNavigationReason(ClientNavigationReason::kAnchorClick);
+   frame_request.SetSourceElement(this);
+   const AtomicString& target =
+@@ -496,6 +498,16 @@
+   LocalFrame* frame = window->GetFrame();
+   NavigationPolicy navigation_policy = NavigationPolicyFromEvent(&event);
+ 
++  // Glance is an explicit trusted Option-click on a normal web link. Keep
++  // download attributes and synthesized/keyboard events on their existing path.
++  const bool plico_glance = RuntimeEnabledFeatures::PlicoGlanceEnabled() &&
++      event.isTrusted() && event.detail() > 0 && event.button() == 0 && event.altKey() &&
++      !event.metaKey() && !event.ctrlKey() && !event.shiftKey() &&
++      navigation_policy == kNavigationPolicyDownload &&
++      !FastHasAttribute(html_names::kDownloadAttr) &&
++      completed_url.ProtocolIsInHttpFamily();
++  if (plico_glance) navigation_policy = kNavigationPolicyNewPopup;
++
+   // Respect the download attribute only if we can read the content, and the
+   // event is not an alt-click or similar.
+   if (FastHasAttribute(html_names::kDownloadAttr) &&
+@@ -512,7 +524,7 @@
+ 
+   base::OnceClosure navigate_closure = blink::BindOnce(
+       &HTMLAnchorElementBase::NavigateToHyperlink, WrapWeakPersistent(this),
+-      std::move(request), navigation_policy, event.isTrusted(),
++      std::move(request), navigation_policy, event.isTrusted(), plico_glance,
+       event.PlatformTimeStamp(), std::move(completed_url));
+ 
+   if (navigation_policy == kNavigationPolicyDownload) {
+--- a/third_party/blink/renderer/core/html/html_anchor_element.h
++++ b/third_party/blink/renderer/core/html/html_anchor_element.h
+@@ -118,6 +118,7 @@
+   void NavigateToHyperlink(ResourceRequest,
+                            NavigationPolicy,
+                            bool is_trusted,
++                           bool plico_glance,
+                            base::TimeTicks platform_time_stamp,
+                            KURL);
+   void HandleClick(MouseEvent&);
+--- a/third_party/blink/renderer/core/loader/frame_load_request.h
++++ b/third_party/blink/renderer/core/loader/frame_load_request.h
+@@ -93,6 +93,8 @@
+ 
+   bool IsContainerInitiated() const { return is_container_initiated_; }
+ 
++  bool IsPlicoGlance() const { return plico_glance_; }
++  void SetPlicoGlance(bool value) { plico_glance_ = value; }
+   NavigationPolicy GetNavigationPolicy() const { return navigation_policy_; }
+   void SetNavigationPolicy(NavigationPolicy navigation_policy) {
+     navigation_policy_ = navigation_policy;
+@@ -250,6 +252,7 @@
+   AtomicString href_translate_;
+   ClientNavigationReason client_navigation_reason_ =
+       ClientNavigationReason::kNone;
++  bool plico_glance_ = false;
+   NavigationPolicy navigation_policy_ = kNavigationPolicyCurrentTab;
+   std::optional<base::UnguessableToken> script_tool_invocation_id_;
+   mojom::blink::TriggeringEventInfo triggering_event_info_ =
+--- a/third_party/blink/renderer/core/loader/frame_loader.cc
++++ b/third_party/blink/renderer/core/loader/frame_loader.cc
+@@ -1016,7 +1016,7 @@
+       request.IsContainerInitiated(),
+       request.GetWindowFeatures().explicit_opener,
+       request.TakeResumeDeferredCommitListener(),
+-      request.GetScriptToolInvocationId());
++      request.GetScriptToolInvocationId(), request.IsPlicoGlance());
+ }
+ 
+ static void FillStaticResponseIfNeeded(WebNavigationParams* params,
+--- a/third_party/blink/renderer/core/frame/local_frame_client.h
++++ b/third_party/blink/renderer/core/frame/local_frame_client.h
+@@ -207,7 +207,8 @@
+       mojo::PendingReceiver<
+           mojom::blink::NavigationResumeDeferredCommitListener>
+           resume_defer_commit_listener,
+-      std::optional<base::UnguessableToken> script_tool_invocation_id) = 0;
++      std::optional<base::UnguessableToken> script_tool_invocation_id,
++      bool plico_glance = false) = 0;
+ 
+   virtual void DispatchWillSendSubmitEvent(HTMLFormElement*) = 0;
+ 
+--- a/third_party/blink/renderer/core/frame/local_frame_client_impl.h
++++ b/third_party/blink/renderer/core/frame/local_frame_client_impl.h
+@@ -149,7 +149,8 @@
+       bool has_rel_opener,
+       mojo::PendingReceiver<
+           mojom::blink::NavigationResumeDeferredCommitListener>,
+-      std::optional<base::UnguessableToken> script_tool_invocation_id) override;
++      std::optional<base::UnguessableToken> script_tool_invocation_id,
++      bool plico_glance = false) override;
+   void DispatchWillSendSubmitEvent(HTMLFormElement*) override;
+   void DidStartLoading() override;
+   void DidStopLoading() override;
+--- a/third_party/blink/renderer/core/loader/empty_clients.h
++++ b/third_party/blink/renderer/core/loader/empty_clients.h
+@@ -372,7 +372,8 @@
+       bool has_rel_opener,
+       mojo::PendingReceiver<
+           mojom::blink::NavigationResumeDeferredCommitListener>,
+-      std::optional<base::UnguessableToken> script_tool_invocation_id) override;
++      std::optional<base::UnguessableToken> script_tool_invocation_id,
++      bool plico_glance = false) override;
+ 
+   void DispatchWillSendSubmitEvent(HTMLFormElement*) override;
+ 
+--- a/third_party/blink/renderer/core/frame/local_frame_client_impl.cc
++++ b/third_party/blink/renderer/core/frame/local_frame_client_impl.cc
+@@ -636,7 +636,8 @@
+     bool has_rel_opener,
+     mojo::PendingReceiver<mojom::blink::NavigationResumeDeferredCommitListener>
+         resume_defer_commit_listener,
+-    std::optional<base::UnguessableToken> script_tool_invocation_id) {
++    std::optional<base::UnguessableToken> script_tool_invocation_id,
++    bool plico_glance) {
+   if (!web_frame_->Client()) {
+     return;
+   }
+@@ -653,6 +654,7 @@
+   navigation_info->force_history_push = force_history_push;
+   navigation_info->navigation_type = type;
+   navigation_info->navigation_policy = static_cast<WebNavigationPolicy>(policy);
++  navigation_info->plico_glance = plico_glance;
+   navigation_info->has_transient_user_activation = request.HasUserGesture();
+   navigation_info->is_unfenced_top_navigation = is_unfenced_top_navigation;
+   navigation_info->frame_load_type = frame_load_type;
+--- a/third_party/blink/renderer/core/loader/empty_clients.cc
++++ b/third_party/blink/renderer/core/loader/empty_clients.cc
+@@ -130,7 +130,8 @@
+     bool is_container_initiated,
+     bool has_rel_opener,
+     mojo::PendingReceiver<mojom::blink::NavigationResumeDeferredCommitListener>,
+-    std::optional<base::UnguessableToken> script_tool_invocation_id) {}
++    std::optional<base::UnguessableToken> script_tool_invocation_id,
++    bool plico_glance) {}
+ 
+ void EmptyLocalFrameClient::DispatchWillSendSubmitEvent(HTMLFormElement*) {}
+ 
+--- a/third_party/blink/public/web/web_navigation_params.h
++++ b/third_party/blink/public/web/web_navigation_params.h
+@@ -108,6 +108,7 @@
+ 
+   // The navigation policy. See WebNavigationPolicy.
+   WebNavigationPolicy navigation_policy = kWebNavigationPolicyCurrentTab;
++  bool plico_glance = false;
+ 
+   // Whether the frame had a transient user activation
+   // at the time this request was issued.
+--- a/content/renderer/render_frame_impl.cc
++++ b/content/renderer/render_frame_impl.cc
+@@ -6133,6 +6133,7 @@
+       blink::WebStringToGURL(info->url_request.ReferrerString()),
+       info->url_request.GetReferrerPolicy());
+   params->disposition = NavigationPolicyToDisposition(policy);
++  params->plico_glance = info->plico_glance;
+   params->triggering_event_info = info->triggering_event_info;
+   params->blob_url_token = CloneBlobURLToken(info->blob_url_token);
+   params->should_replace_current_entry =
+--- a/third_party/blink/public/mojom/frame/remote_frame.mojom
++++ b/third_party/blink/public/mojom/frame/remote_frame.mojom
+@@ -122,6 +122,7 @@
+   ui.mojom.WindowOpenDisposition disposition;
+   bool should_replace_current_entry;
+   bool user_gesture;
++  bool plico_glance = false;
+ 
+   // Whether this should be interpreted as a navigation to _unfencedTop,
+   // i.e. to the outermost frame from a fenced frame in a renderer process that
+--- a/content/browser/renderer_host/render_frame_host_impl.cc
++++ b/content/browser/renderer_host/render_frame_host_impl.cc
+@@ -10259,6 +10259,20 @@
+     return;
+   }
+ 
++  // The renderer requests preview presentation, never additional authority.
++  // Check sandbox policy in the browser and carry it to the new WebContents.
++  if (params->plico_glance &&
++      (params->disposition != WindowOpenDisposition::NEW_POPUP ||
++       !validated_url.SchemeIsHTTPOrHTTPS() || params->post_body ||
++       !params->initiator_frame_token ||
++       *params->initiator_frame_token != GetFrameToken() ||
++       !params->user_gesture ||
++       params->triggering_event_info != blink::mojom::TriggeringEventInfo::kFromTrustedEvent ||
++       IsSandboxed(network::mojom::WebSandboxFlags::kPopups) ||
++       params->is_unfenced_top_navigation)) {
++    return;
++  }
++
+   // If the flag `is_unfenced_top_navigation` is set, this is a special code
+   // path for MPArch fenced frames. The target frame doesn't have a handle
+   // inside the MPArch renderer process, so we need to set it here.
+@@ -10384,7 +10398,8 @@
+       params->disposition, params->should_replace_current_entry,
+       params->user_gesture, params->triggering_event_info,
+       params->href_translate, std::move(blob_url_loader_factory),
+-      params->has_rel_opener, params->started_by_ad);
++      params->has_rel_opener, params->started_by_ad, params->plico_glance,
++      active_sandbox_flags());
+ }
+ 
+ void RenderFrameHostImpl::GetAssociatedInterface(
+--- a/content/browser/renderer_host/navigator.h
++++ b/content/browser/renderer_host/navigator.h
+@@ -20,6 +20,7 @@
+ #include "third_party/blink/public/mojom/frame/triggering_event_info.mojom-shared.h"
+ #include "third_party/blink/public/mojom/navigation/navigation_params.mojom-forward.h"
+ #include "ui/base/window_open_disposition.h"
++#include "services/network/public/mojom/web_sandbox_flags.mojom-shared.h"
+ 
+ class GURL;
+ 
+@@ -140,7 +141,9 @@
+       const std::string& href_translate,
+       scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory,
+       bool has_rel_opener,
+-      bool started_by_ad);
++      bool started_by_ad,
++      bool plico_glance = false,
++      network::mojom::WebSandboxFlags plico_sandbox_flags = network::mojom::WebSandboxFlags::kNone);
+ 
+   // Called when a document requests a navigation in another document through a
+   // `blink::RemoteFrame`. If `method` is "POST", then `post_body` needs to
+--- a/content/browser/renderer_host/navigator.cc
++++ b/content/browser/renderer_host/navigator.cc
+@@ -1087,7 +1087,9 @@
+     const std::string& href_translate,
+     scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory,
+     bool has_rel_opener,
+-    bool started_by_ad) {
++    bool started_by_ad,
++    bool plico_glance,
++    network::mojom::WebSandboxFlags plico_sandbox_flags) {
+   // Note: This can be called for subframes (even when OOPIFs are not possible)
+   // if the disposition calls for a different window.
+ 
+@@ -1133,6 +1135,8 @@
+   params.should_replace_current_entry = should_replace_current_entry;
+   params.user_gesture = user_gesture;
+   params.triggering_event_info = triggering_event_info;
++  params.plico_glance = plico_glance;
++  params.plico_sandbox_flags = plico_sandbox_flags;
+   params.initiator_origin = initiator_origin;
+   params.initiator_base_url = initiator_base_url;
+   params.initiator_frame_token = base::OptionalFromPtr(initiator_frame_token);
+--- a/content/public/browser/page_navigator.h
++++ b/content/public/browser/page_navigator.h
+@@ -27,6 +27,7 @@
+ #include "third_party/blink/public/mojom/frame/triggering_event_info.mojom-shared.h"
+ #include "ui/base/page_transition_types.h"
+ #include "ui/base/window_open_disposition.h"
++#include "services/network/public/mojom/web_sandbox_flags.mojom-shared.h"
+ #include "url/gurl.h"
+ 
+ namespace network {
+@@ -130,6 +131,8 @@
+ 
+   // The disposition requested by the navigation source.
+   WindowOpenDisposition disposition;
++  bool plico_glance = false;
++  network::mojom::WebSandboxFlags plico_sandbox_flags = network::mojom::WebSandboxFlags::kNone;
+ 
+   // The transition type of navigation.
+   ui::PageTransition transition;
+--- a/chrome/browser/ui/navigator/browser_navigator_params.h
++++ b/chrome/browser/ui/navigator/browser_navigator_params.h
+@@ -25,6 +25,7 @@
+ #include "content/public/browser/render_frame_host.h"
+ #include "content/public/browser/site_instance.h"
+ #include "content/public/common/referrer.h"
++#include "services/network/public/mojom/web_sandbox_flags.mojom-shared.h"
+ #include "services/network/public/cpp/resource_request_body.h"
+ #include "services/network/public/cpp/shared_url_loader_factory.h"
+ #include "third_party/blink/public/common/tokens/tokens.h"
+@@ -100,6 +101,7 @@
+   // The URL/referrer to be loaded. Ignored if |contents_to_insert| is non-NULL.
+   GURL url;
+   content::Referrer referrer;
++  network::mojom::WebSandboxFlags plico_sandbox_flags = network::mojom::WebSandboxFlags::kNone;
+ 
+   // The frame token of the initiator of the navigation. This is best effort: it
+   // is only defined for some renderer-initiated navigations (e.g., not drag and
+--- a/chrome/browser/ui/navigator/browser_navigator_params.cc
++++ b/chrome/browser/ui/navigator/browser_navigator_params.cc
+@@ -51,6 +51,7 @@
+   DCHECK(params.Valid());
+ #endif
+ 
++  this->plico_sandbox_flags = params.plico_sandbox_flags;
+   this->initiator_frame_token = params.initiator_frame_token;
+   this->initiator_process_id = params.initiator_process_id;
+   this->initiator_origin = params.initiator_origin;
+--- a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
++++ b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
+@@ -3,6 +3,9 @@
+ // found in the LICENSE file.
+ 
+ #include "chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.h"
++#if BUILDFLAG(IS_MAC)
++#include "plico/native/glance_bridge.h"
++#endif
+ 
+ #include "base/check_deref.h"
+ #include "base/metrics/histogram_macros.h"
+@@ -593,8 +596,16 @@
+ 
+   chrome::ConfigureTabGroupForNavigation(popup_delegate->nav_params());
+ 
+-  base::WeakPtr<content::NavigationHandle> navigation_handle =
+-      Navigate(popup_delegate->nav_params());
++  base::WeakPtr<content::NavigationHandle> navigation_handle;
++#if BUILDFLAG(IS_MAC)
++  if (params.plico_glance) {
++    if (!plico::NavigateGlance(popup_delegate->nav_params(), &navigation_handle))
++      return nullptr;
++  } else
++#else
++  if (params.plico_glance) return nullptr;
++#endif
++    navigation_handle = Navigate(popup_delegate->nav_params());
+ 
+   if (navigation_handle_callback && navigation_handle) {
+     std::move(navigation_handle_callback).Run(*navigation_handle);
+--- a/chrome/browser/ui/browser_web_contents_delegate/BUILD.gn
++++ b/chrome/browser/ui/browser_web_contents_delegate/BUILD.gn
+@@ -41,6 +41,9 @@
+       "//content/public/browser",
+       "//ui/base",
+     ]
++    if (is_mac) {
++      deps += [ "//plico:glance_bridge" ]
++    }
+     if (use_aura) {
+       deps += [ "//chrome/browser/ui:overscroll_pref_manager" ]
+     }

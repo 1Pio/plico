@@ -82,6 +82,8 @@ void ComposerView::Begin(const std::u16string& initial) {
   Render();
 }
 
+void ComposerView::FocusInput() { input_->RequestFocus(); }
+
 void ComposerView::TabClosed(TabId tab, bool editing) {
   std::erase_if(choices_, [tab](const ComposerChoice& choice) { return choice.tab == tab; });
   selected_.reset();

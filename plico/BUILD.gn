@@ -16,6 +16,10 @@ source_set("tab_metadata") {
 }
 
 if (is_mac) {
+  source_set("glance_bridge") {
+    sources = [ "native/glance_bridge.h", "native/glance_bridge.cc" ]
+    deps = [ "//base" ]
+  }
   source_set("event_dispatch") {
     sources = [ "native/event_dispatch_mac.h", "native/event_dispatch_mac.mm" ]
     deps = [ "//base" ]

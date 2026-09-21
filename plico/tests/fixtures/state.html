@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Stateful preview</title>
+<link rel="stylesheet" href="fixture.css">
+<h1 id="title">Stateful preview</h1>
+<label>Unsaved text <input id="unsaved" placeholder="Type here using native input"></label>
+<label><input id="beforeunload" type="checkbox"> Ask before leaving</label>
+<button id="increment">Increment in-memory counter</button>
+<button id="history">Add history entry</button>
+<button id="permission">Request geolocation</button>
+<nav>
+  <a id="nested" href="state.html?title=Nested%20preview">Nested preview</a>
+  <a id="child" target="_blank" href="state.html?title=Child">Linked new tab</a>
+  <a id="normal" href="index.html">Navigate back to fixture index</a>
+</nav>
+<pre id="probe"></pre>
+<script src="probe.js"></script>

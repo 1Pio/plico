@@ -1,0 +1,8 @@
+:root { font: 16px/1.5 system-ui; color-scheme: light dark; }
+body { max-width: 850px; margin: 40px auto; padding: 0 24px; }
+nav { display: flex; flex-wrap: wrap; gap: 16px; margin: 24px 0; }
+label { display: block; margin: 16px 0; }
+input:not([type=checkbox]) { min-width: 280px; padding: 8px; }
+button { padding: 8px; margin: 4px; }
+iframe { display: block; width: 100%; height: 120px; }
+pre { overflow: auto; padding: 16px; background: #7772; }

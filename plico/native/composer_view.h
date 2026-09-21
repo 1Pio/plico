@@ -36,6 +36,7 @@ class ComposerView : public views::View,
                base::RepeatingClosure cancel);
   ~ComposerView() override;
   void Begin(const std::u16string& initial);
+  void FocusInput();
   void TabClosed(TabId tab, bool editing = false);
   void ContentsChanged(views::Textfield*, const std::u16string&) override;
   bool HandleKeyEvent(views::Textfield*, const ui::KeyEvent&) override;

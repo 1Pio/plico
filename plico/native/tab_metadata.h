@@ -22,6 +22,7 @@ class TabMetadata : public content::WebContentsUserData<TabMetadata> {
   bool last_in_stack = false;
   double activated_at = 0;
   int window = 0;  // Transient: distinguishes cross-window transfers.
+  bool restored = false;  // Transient: set only by the session restoration path.
   bool inspection_blocked = false;  // Current tab lifetime; user can allow again.
   std::string Serialize() const;
   static TabMetadata& Get(content::WebContents* contents);
