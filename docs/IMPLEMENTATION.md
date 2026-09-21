@@ -33,6 +33,36 @@ restoration, isolation and upstream-update acceptance scenarios.
 | Shortcut editing and back-to-opener behavior | Pending |
 | Upstream update rehearsal | Pending |
 
+### Resource incident and enforced limits
+
+The developer reported application-memory exhaustion during baseline preparation
+on the 24 GB Mac. The build was stopped immediately and process inspection found
+no remaining Plico compiler executables. Reported system free memory recovered
+to 75%, subsequently 78%; swap still retained about 9 GiB initially.
+
+The active Blink binding generation step uses `multiprocessing.cpu_count()` for
+its own worker pool, independently of Siso's outer job limit. The default on this
+host is 15. This is a concrete source of hidden parallelism; the exact peak
+allocation per process was not captured before stopping.
+
+All subsequent builds use `scripts/build.sh`: one outer job,
+`PYTHON_CPU_COUNT=1`, a 2048 MiB Node heap cap, and a native macOS physical-footprint
+monitor over the build's process group and descendants. The guard stops at
+6 GiB build footprint, below 35% free system memory, or over 512 MiB new swap.
+It requires at least 45% free memory before starting. It signals only identified build processes and their owned process groups, and
+preserves incremental output. Retained process start identities cover observed
+workers that create separate groups. Sampling runs once per second; this is a
+stop mechanism, not a kernel-enforced allocation cap or a sandbox for daemonizing
+programs.
+
+Seven low-memory process tests pass, covering normal exit, low-threshold stop,
+SIGINT/SIGTERM/SIGHUP cleanup, surviving detached workers, discovery failure, and
+PID reuse. The Python CPU limit also reached an actual Siso action. Independent
+review exposed cleanup defects; the shutdown, discovery-failure and PID-identity
+regressions are now covered. This is evidence
+that the protections operate, not a promise that every Chromium compilation unit
+will fit. A resource-limit stop requires investigation before another attempt.
+
 ### Baseline build findings
 
 The source and toolchain were prepared using upstream's Git fallback, followed
