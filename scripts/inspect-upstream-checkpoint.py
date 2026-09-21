@@ -28,7 +28,7 @@ SELECTED = {
 def inspect(path):
     totals = {"files": 0, "bytes": 0, "output_files": 0,
               "output_bytes": 0, "object_files": 0, "object_bytes": 0}
-    samples, state, selected = [], [], []
+    samples, state, selected, truncated = [], [], [], []
     errors = []
     with zipfile.ZipFile(path) as archive:
         inner = archive.open("build_src.tar.zst")
@@ -67,12 +67,16 @@ def inspect(path):
                             if len(state) < 30:
                                 state.append({"path": name, "bytes": item.size})
                     if name in SELECTED:
-                        if item.size > 16 * 1024**2:
-                            raise RuntimeError("Selected metadata unexpectedly large")
-                        # Fixed allowlist; never restore archive paths or links.
+                        # Large generated Ninja manifests need only a bounded
+                        # prefix for configuration inspection; continue inventory.
                         target = OUT / name.replace("/", "__")
-                        target.write_bytes(tree.extractfile(item).read())
+                        retained = min(item.size, 128 * 1024)
+                        with tree.extractfile(item) as contents:
+                            target.write_bytes(contents.read(retained))
                         selected.append(name)
+                        if retained < item.size:
+                            truncated.append({"path": name, "bytes": item.size,
+                                              "retained_bytes": retained})
             # Consume tar padding so the bounded producer can finish.
             while decoder.stdout.read(256 * 1024):
                 pass
@@ -94,7 +98,7 @@ def inspect(path):
     return {"upstream_repository": REPOSITORY, "run": RUN,
             "artifact": ARTIFACT, "zip_sha256": SHA256, "totals": totals,
             "object_samples": samples, "build_state_samples": state,
-            "selected_metadata": selected,
+            "selected_metadata": selected, "truncated_metadata": truncated,
             "scope": "Archive inventory only; no compilation or object reuse demonstrated."}
 
 
