@@ -13,6 +13,58 @@ import sys
 import time
 
 MIB = 1024 * 1024
+APP_SUFFIXES = ("/ChatGPT.app/Contents/MacOS/ChatGPT", "/Codex.app/Contents/MacOS/Codex")
+# The sysctl returns dispatch flags, not XNU's internal pressure enum.
+# kern_memorystatus_notify.c converts Normal -> 1, Warning/Urgent -> 2,
+# Critical -> 4 before exposing kern.memorystatus_vm_pressure_level.
+PRESSURE_NAMES = {1: "Normal", 2: "Warning", 4: "Critical"}
+
+
+def kernel_pressure():
+    value = int(subprocess.check_output(
+        ["/usr/sbin/sysctl", "-n", "kern.memorystatus_vm_pressure_level"], text=True))
+    if value not in PRESSURE_NAMES:
+        raise RuntimeError(f"Unknown kernel memory pressure {value}; refusing to proceed.")
+    return value
+
+
+def on_ac_power():
+    output = subprocess.check_output(["/usr/bin/pmset", "-g", "batt"], text=True)
+    return "Now drawing from 'AC Power'" in output.splitlines()[0]
+
+
+def app_processes():
+    """Find desktop app families even when this guard is owned by launchd."""
+    output = subprocess.check_output(["/bin/ps", "-axo", "pid=,comm="], text=True)
+    identities = {}
+    for line in output.splitlines():
+        row = line.strip().split(maxsplit=1)
+        if len(row) == 2 and row[1].endswith(APP_SUFFIXES):
+            pid = int(row[0])
+            identity = process_identity(pid)
+            if identity is not None:
+                identities[pid] = identity
+    return process_tree(None, identities, identities)
+
+
+def write_status(path, **values):
+    if path is None:
+        return
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps({"time": time.time(), "pid": os.getpid(), **values}, indent=2) + "\n")
+    temporary.replace(path)
+
+
+def readiness_reason(free, pressure, combined_mib, args, ac=True):
+    if pressure != 1:
+        return f"kernel memory pressure is {PRESSURE_NAMES[pressure]}"
+    if free < args.min_free_percent + 10:
+        return f"free memory is {free}%; at least {args.min_free_percent + 10}% is required to start"
+    if combined_mib > args.max_host_mib:
+        return f"host app and build use {combined_mib:.0f} MiB, exceeding {args.max_host_mib} MiB"
+    if args.require_ac_power and not ac:
+        return "waiting for AC power"
+    return None
 
 
 class RUsageInfoV2(ctypes.Structure):
@@ -96,7 +148,7 @@ def host_app():
         if len(row) != 2:
             return None
         parent, command = row
-        if command.endswith(("/ChatGPT.app/Contents/MacOS/ChatGPT", "/Codex.app/Contents/MacOS/Codex")):
+        if command.endswith(APP_SUFFIXES):
             return pid, process_identity(pid)
         pid = int(parent)
         if pid <= 1:
@@ -104,7 +156,9 @@ def host_app():
     return None
 
 
-def breach(free, swap, baseline_swap, build_mib, args, host_mib=None):
+def breach(free, swap, baseline_swap, build_mib, args, host_mib=None, pressure=1):
+    if pressure != 1:
+        return f"kernel memory pressure is {PRESSURE_NAMES[pressure]}"
     if free < args.min_free_percent:
         return f"system free memory {free}% is below {args.min_free_percent}%"
     if build_mib > args.max_build_mib:
@@ -211,47 +265,91 @@ def main():
     parser.add_argument("--max-host-mib", type=int, default=14336)
     parser.add_argument("--min-free-percent", type=int, default=35)
     parser.add_argument("--max-swap-growth-mib", type=int, default=512)
+    parser.add_argument("--independent", action="store_true",
+                        help="Require app-independent ancestry and monitor all desktop app families")
+    parser.add_argument("--wait-for-headroom-seconds", type=int, default=0)
+    parser.add_argument("--max-runtime-seconds", type=int, default=0)
+    parser.add_argument("--require-ac-power", action="store_true")
+    parser.add_argument("--status", type=Path)
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("a command is required")
+    if not 0 <= args.wait_for_headroom_seconds <= 43200:
+        parser.error("headroom wait must be between 0 and 43200 seconds")
+    if args.max_runtime_seconds < 0:
+        parser.error("runtime limit cannot be negative")
+    if args.wait_for_headroom_seconds and not args.independent:
+        parser.error("waiting for headroom requires independent supervision")
+    if args.status and args.status.parent.resolve() != args.log.parent.resolve():
+        parser.error("status and telemetry must share the guarded log directory")
     args.log.parent.mkdir(parents=True, exist_ok=True)
     lock = (args.log.parent / "memory-guard.lock").open("a")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         raise SystemExit("Another guarded operation is already using this build directory.")
-    free, baseline_swap = system_memory()
-    if free < args.min_free_percent + 10:
-        raise SystemExit(f"Build held: free memory is {free}%; at least {args.min_free_percent + 10}% is required to start.")
-    # Verify permission and the native structure before starting a compiler.
-    own, count = footprint({os.getpid()})
-    if count != 1 or own <= 0:
-        raise SystemExit("Cannot verify native process footprint accounting.")
-    host = host_app()
-    if host:
-        host_mib, _ = footprint(process_tree(None, {host[0]}))
-        if host_mib > args.max_host_mib:
-            raise SystemExit(f"Build held: host app already uses {host_mib:.0f} MiB.")
-    env = os.environ.copy()
-    env["PYTHON_CPU_COUNT"] = "1"
-    # GRIT forks a copy of its parsed resource tree even with one CPU worker.
-    # Its supported serial mode avoids the extra process and copy-on-write peak.
-    env["GRIT_DISABLE_MULTIPROCESSING"] = "1"
-    env["NODE_OPTIONS"] = "--max-old-space-size=2048"
-    env["GOMAXPROCS"] = "2"
-    env["GOMEMLIMIT"] = "1536MiB"  # Go's soft GC target, not an allocation cap.
     interrupted = []
     def on_signal(sig, frame):
         interrupted.append(sig)
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, on_signal)
+    host = host_app()
+    if args.independent and host:
+        raise SystemExit("Independent mode requires launchd ancestry, not a desktop-app child.")
+    own, count = footprint({os.getpid()})
+    if count != 1 or own <= 0:
+        raise SystemExit("Cannot verify native process footprint accounting.")
+    deadline = time.monotonic() + args.wait_for_headroom_seconds
+    ready_since = None
+    previous_reason = None
+    while True:
+        if interrupted:
+            write_status(args.status, state="canceled", exit_code=128 + interrupted[0])
+            return 128 + interrupted[0]
+        free, baseline_swap = system_memory()
+        pressure = kernel_pressure()
+        if host and process_identity(host[0]) != host[1]:
+            raise SystemExit("Host app exited before the build started.")
+        tracked = app_processes() if args.independent else (process_tree(None, {host[0]}) if host else set())
+        combined_mib, _ = footprint(tracked | {os.getpid()})
+        reason = readiness_reason(free, pressure, combined_mib, args,
+                                  on_ac_power() if args.require_ac_power else True)
+        now = time.monotonic()
+        if reason:
+            ready_since = None
+        elif ready_since is None:
+            ready_since = now
+        # Independent queued jobs require a stable 15-second readiness window.
+        if not reason and (not args.wait_for_headroom_seconds or now - ready_since >= 15):
+            break
+        status = reason or "confirming stable memory headroom"
+        write_status(args.status, state="waiting", reason=status, free_percent=free,
+                     pressure=PRESSURE_NAMES[pressure], combined_mib=round(combined_mib, 1),
+                     wait_deadline=time.time() + max(0, deadline - now))
+        if status != previous_reason:
+            print("Build held: " + status, flush=True)
+            previous_reason = status
+        if not args.wait_for_headroom_seconds or now >= deadline:
+            write_status(args.status, state="held", reason=status, exit_code=75)
+            return 75
+        time.sleep(min(5, max(0, deadline - now)))
+    env = os.environ.copy()
+    env["PYTHON_CPU_COUNT"] = "1"
+    env["GRIT_DISABLE_MULTIPROCESSING"] = "1"
+    env["NODE_OPTIONS"] = "--max-old-space-size=2048"
+    env["GOMAXPROCS"] = "2"
+    env["GOMEMLIMIT"] = "1536MiB"
     child = subprocess.Popen(command, env=env, start_new_session=True)
     owned = OwnedProcesses(child)
     minimum_swap = baseline_swap
+    started = time.monotonic()
+    outcome = "exited"
+    exit_code = None
     try:
+        write_status(args.status, state="running", child_pid=child.pid, independent=args.independent)
         owned.refresh()
         with args.log.open("a", buffering=1) as log:
             while True:
@@ -259,20 +357,33 @@ def main():
                 if child.poll() is not None:
                     break
                 if interrupted:
-                    return 128 + interrupted[0]
+                    outcome, exit_code = "canceled", 128 + interrupted[0]
+                    return exit_code
+                if args.max_runtime_seconds and time.monotonic() - started >= args.max_runtime_seconds:
+                    outcome, exit_code = "time_limit", 124
+                    print("Build stopped at its deliberate calibration time limit.", flush=True)
+                    return exit_code
                 free, swap = system_memory()
+                pressure = kernel_pressure()
                 minimum_swap = min(minimum_swap, swap)
                 usage, count = footprint(pids)
                 host_mib = None
-                if host:
+                if args.independent:
+                    # Union avoids double counting if an app happens to parent a worker.
+                    host_mib, _ = footprint(app_processes() | pids | {os.getpid()})
+                elif host:
                     if process_identity(host[0]) != host[1]:
                         print("Host app exited; stopping owned build.", file=sys.stderr)
-                        return 75
+                        outcome, exit_code = "host_exited", 75
+                        return exit_code
                     host_mib, _ = footprint(process_tree(None, {host[0]}))
                 log.write(json.dumps({"time": time.time(), "build_mib": round(usage, 1),
                     "processes": count, "free_percent": free, "swap_mib": swap,
-                    "host_mib": round(host_mib, 1) if host_mib is not None else None}) + "\n")
-                reason = breach(free, swap, minimum_swap, usage, args, host_mib)
+                    "host_mib": round(host_mib, 1) if host_mib is not None else None,
+                    "kernel_pressure": pressure, "independent": args.independent}) + "\n")
+                reason = breach(free, swap, minimum_swap, usage, args, host_mib, pressure)
+                if not reason and args.require_ac_power and not on_ac_power():
+                    reason = "AC power disconnected"
                 if reason:
                     print("Memory guard stopped build: " + reason, file=sys.stderr, flush=True)
                     try:
@@ -280,10 +391,17 @@ def main():
                             "owned_processes": process_breakdown(owned.known_live())}) + "\n")
                     except Exception as error:
                         print(f"Stop attribution unavailable: {error}", file=sys.stderr)
-                    return 75
+                    outcome, exit_code = "guard_stop", 75
+                    return exit_code
                 time.sleep(1)
+    except BaseException:
+        outcome, exit_code = "monitor_error", 1
+        raise
     finally:
         stop_group(owned)
+        result = exit_code if exit_code is not None else (128 + interrupted[0] if interrupted else child.returncode)
+        write_status(args.status, state=outcome, exit_code=result,
+                     elapsed_seconds=round(time.monotonic() - started, 1))
     return 128 + interrupted[0] if interrupted else child.returncode
 
 

@@ -29,9 +29,11 @@ class BuildWrapperTest(unittest.TestCase):
     def tearDown(self):
         self.temporary.__exit__(None, None, None)
 
-    def run_wrapper(self, jobs=None, *targets):
+    def run_wrapper(self, jobs=None, *targets, mode=None):
         env = os.environ.copy()
         env.pop('PLICO_BUILD_JOBS', None)
+        env.pop('PLICO_GUARD_MODE', None)
+        if mode is not None: env['PLICO_GUARD_MODE'] = mode
         if jobs is not None:
             env['PLICO_BUILD_JOBS'] = jobs
         return subprocess.run(['bash', str(self.root / 'scripts/build.sh'), *targets],
@@ -72,6 +74,24 @@ class BuildWrapperTest(unittest.TestCase):
         self.assertEqual(argv[0], str(self.root / 'scripts/memory-guard.py'))
         self.assertEqual(argv[-1], 'obj/plico/native.o')
         self.assertIn('-local_jobs=2', argv)
+
+    def test_independent_wrapper_retains_caps_and_serial_build_settings(self):
+        result = self.run_wrapper('2', mode='independent')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads(result.stdout)['argv']
+        self.assertIn('--independent', argv)
+        self.assertIn('--require-ac-power', argv)
+        self.assertEqual(argv[argv.index('--wait-for-headroom-seconds') + 1], '43200')
+        self.assertEqual(argv[argv.index('--max-runtime-seconds') + 1], '0')
+        self.assertIn('-local_jobs=2', argv)
+        self.assertNotIn('--max-build-mib', argv)
+        self.assertNotIn('--max-host-mib', argv)
+        self.assertNotIn('--min-free-percent', argv)
+
+    def test_unknown_mode_is_rejected(self):
+        result = self.run_wrapper(mode='unmonitored')
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, '')
 
 
 if __name__ == '__main__':

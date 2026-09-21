@@ -51,7 +51,8 @@ monitor over the build's process group and descendants. The guard stops at
 6 GiB build footprint, 14 GiB total ChatGPT/Codex process-family footprint,
 below 35% free system memory, or over 512 MiB new swap. A lock prevents two guarded
 operations from compiling concurrently in the same build directory. If the host
-app exits, its guarded build stops.
+app exits, its interactive guarded build stops. The app-independent mode
+documented below now supports unattended compilation.
 It requires at least 45% free memory before starting. It signals only identified build processes and their owned process groups, and
 preserves incremental output. Retained process start identities cover observed
 workers that create separate groups. Sampling runs once per second; this is a
@@ -260,7 +261,8 @@ without recent growth. This was a resource stop, not an established compiler
 failure. Existing incremental output is retained. No compiler has been restarted.
 
 With the build stopped, the kernel still reports memorystatus level 2, which
-Apple's XNU definition calls Urgent (equivalent to Warning), and the desktop
+the public sysctl reports as Warning (a dispatch flag, not XNU's internal
+Urgent enum value), and the desktop
 app family accounts for roughly 9.5 GiB of physical footprint. Current samples
 are in ignored `build/logs/checkpoint-latest.json`. Fan noise and observed build
 usage do not establish available RAM or a safe compiler-job maximum. The 6 GiB
@@ -272,8 +274,8 @@ A public upstream ARM64 checkpoint exists for the exact pinned platform commit:
 artifact 10534986217, 6,867,963,157 bytes. Its ZIP directory contains a
 `build_src.tar.zst` of 6,876,100,218 bytes. The expected ZIP SHA256 is
 `d777ec2fafb4be162babbdf7c7b1b01210fb559940e763cca00fca7fba999ce2`.
-The packaging script archives `build/src`; the actual object inventory and
-successful reuse are still unverified until inspection completes.
+The packaging script archives `build/src`; the completed inventory is recorded
+below. Successful reuse remains unverified.
 
 The production checkpoint uses official/noncomponent output, PGO phase 2,
 symbol level 1, sccache, and Xcode 26.0.1. Our component development build uses
@@ -286,12 +288,10 @@ the free standard GitHub macOS runner or this Mac's safe concurrency.
 `scripts/inspect-upstream-checkpoint.py` streams and inventories the pinned
 archive, retains only allowlisted build metadata, and never restores its source
 or executes archive content. A fixture verified file/object counts, selected
-metadata and ignored symlinks. A manual free Ubuntu workflow is committed, but
-Actions remains disabled: automatic approval review rejected enabling an
-unrestricted action policy, and restricted enablement is awaiting user approval.
-Local inspection continues independently using four bounded network streams;
-tool session 77908 and `build/reuse-qualification/fetch-inspection.log` are the
-current inspection handles. Check this job before starting a duplicate fetch.
+metadata and ignored symlinks. The initial unrestricted Actions enablement was
+rejected by automatic approval review. The user subsequently approved restricted
+enablement, now verified below. The first local range download stopped after a
+connection reset; its completed ranges remain available for the bounded retry.
 
 After inspection, choose between a compatible checkpoint and the preserved local
 component build. To qualify more compiler jobs, first prepare build supervision
@@ -330,3 +330,46 @@ its job logs next; the workflow uploads no artifacts and writes no Actions cache
 The user also explicitly confirmed that the next local compilation must run
 independently of ChatGPT and qualify more workstation capacity within physical
 memory limits. Compilation remains stopped; no resource thresholds changed.
+
+
+## Current checkpoint: independent supervision and archive inventory
+
+Updated 2026-09-21 21:12 UTC. There is still no linked or launched Plico browser;
+all native acceptance scenarios remain unexecuted.
+
+The corrected free inspection [run 35654491016](https://github.com/1Pio/plico/actions/runs/35654491016)
+succeeded. The exact upstream ZIP checksum was verified, and its archive contains
+815,950 files (31,211,558,896 bytes), including 47,136 object files
+(6,396,444,904 bytes). Siso dependency/state files and the Ninja log are present.
+The compiler revision matches our local LLVM revision. Production/component,
+PGO, symbol and SDK differences still prevent claiming any actual object reuse.
+An oversized generated manifest stopped the first inspector; retaining a bounded
+128 KiB prefix fixed it, with a 17 MiB manifest regression fixture passing.
+Evidence is retained in `build/reuse-qualification/checkpoint-inventory.json`,
+`upstream-args.gn`, and `cloud-inspection-success.log`.
+
+The local download now resumes only journaled missing ranges, retries transient
+range failures at most three times and records every completed future even if
+another fails. Its partial-file size alone does not prove coverage. Check
+`fetch-resume.log` and `checkpoint-download.json`; preserve both until full SHA256
+verification. Never restore this checkpoint over the existing component tree.
+
+`unattended-build.py` now controls one launchd job, with no KeepAlive restart.
+The guard refuses independent mode beneath a ChatGPT/Codex ancestor, rediscovers
+all app families for aggregate accounting, waits for AC power and stable start
+headroom, and stops on kernel Warning/Critical pressure as well as every original
+threshold. Separate controller and guard locks prevent duplicate operations.
+Three-job starts require a calibration time limit of at most 600 seconds.
+
+Sixteen low-memory guard tests and six wrapper tests passed. A live launchd probe
+proved independent ancestry, survival after its bootstrap caller returned, and
+cleanup of both guard and payload on job unload. Its pressure samples were
+simulated only for that harmless sleeping payload; this does not qualify compiler
+memory usage or app-restart behavior end to end. Evidence:
+`build/qualification/supervision/launchd-qualification.json`.
+
+At 21:12 UTC, actual memory pressure recovered to Normal, reported free memory
+was 71%, app families used 9,537 MiB, and swap remained 7,651 MiB. No compiler was
+running. The next compilation must use the launchd controller and preserve the
+existing output, serial generators and resource thresholds. Qualification of
+higher throughput is still pending, alongside cache reuse and native UI proof.
