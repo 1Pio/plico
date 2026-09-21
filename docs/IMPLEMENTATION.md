@@ -459,3 +459,28 @@ bounds Siso's documented step/preprocessing/scandeps/thread/cache concurrency an
 omits verbose explanation output. All memory stop thresholds remain unchanged.
 It is still a free dry-run qualification, not compilation or native acceptance.
 Check its actual outcome before claiming any cache benefit or retrying again.
+
+
+## Checkpoint timestamp diagnosis
+
+The representative-object [diagnostic](https://github.com/1Pio/plico/actions/runs/35665121137)
+completed successfully as a dry run. Its three target manifests and build args
+matched the archived versions byte for byte, yet Siso scheduled 2,063 compiler
+commands through their dependencies. The retained explanations identify lost
+fractional object mtimes: the extracted file time was older than the precise
+mtime in the archived dependency log. This is not evidence of successful reuse.
+
+The checkpoint's original Siso state also stores SHA256 digests, sizes and
+nanosecond timestamps. `restore-checkpoint-object-times.py` verifies all candidate
+objects before restoring only metadata, never bytes or dependency logs. It
+accepts only exact whole-second truncation or the precise float conversion used
+by tar extraction; changed content, unrelated timestamps, unsupported digest
+formats and symlinks are rejected. The CLI is restricted to the identified,
+disposable object-probe restoration. Complete/local build trees are protected.
+Eight integrity tests pass, including same-size corruption, filesystem float
+rounding and refusal to alter a complete checkpoint. Actual retained-work improvement still requires the follow-up dry run.
+
+The object probe omits downstream ThinLTO cache and debug symbols to fit the
+standard runner. Full restoration stays available and cannot be mixed with a
+partial probe resume. No application has been launched or qualified by these
+archive diagnostics; native browser acceptance remains pending.

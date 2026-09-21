@@ -45,6 +45,8 @@ jobs:
           snapshot = {name: (out / name).read_text() for name in names}
           Path('build/reuse-qualification/original-manifests.json').write_text(json.dumps(snapshot))
           PYTHON
+      - name: Recover timestamp precision only for hash-verified archived objects
+        run: python3 scripts/restore-checkpoint-object-times.py --apply
       - name: Regenerate manifest under a bounded memory guard
         working-directory: build/reuse-qualification/restored/src
         run: |
