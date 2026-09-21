@@ -198,7 +198,7 @@ does not pass the rehearsal. Keep a rollback copy and isolate test profiles.
 ## Parallelism calibration, 2026-09-21
 
 The user authorized safely increasing compilation parallelism, retaining all
-memory safeguards. The wrapper still defaults to one local job and accepts
+memory safeguards. The wrapper accepts
 explicit values 1 through 3. It now passes Siso's `-local_jobs` directly: the
 upstream autoninja conversion can ignore `-j 2` when `PYTHON_CPU_COUNT=1`. The
 generator CPU limit, GRIT serial mode, heap limits, one-second footprint guard,
@@ -215,7 +215,7 @@ rejection of unsafe values, rejection of flag overrides in target arguments, and
 preservation of the memory guard for narrow targets. These are short calibration
 results, not a guaranteed memory bound for later Chromium units.
 
-The three-job trial started at 2026-09-21 17:50:44 UTC and continues in
+The three-job trial started at 2026-09-21 17:50:44 UTC; its log is
 `build/logs/plico-full-build-jobs3.log`. Aggregate telemetry stays in
 `build/logs/build-memory.jsonl`. Siso confirms local capacity three and
 action/link/bundle capacity one. Neither the guard nor its thresholds changed.
@@ -226,3 +226,25 @@ a real older-to-current release transition if no newer release exists; do not
 confuse a same-revision patch roundtrip with an upgrade. The previous release
 is `0.17.1.1`. Keep separate source/build/profile state and account for disk
 capacity before preparing that comparison.
+
+The three-job trial completed 181 actions in 3m55s with zero failed actions
+before a deliberate stop. Sampled build footprint reached 5,706 MiB and the
+host family reached 12,915 MiB. Free memory stayed at or above 66% and swap
+remained unchanged. That leaves little headroom below the 6,144 MiB build limit,
+so two local jobs are now the wrapper default and the selected unattended setting.
+Three remains available only for attended calibration. These trials covered
+different engine units, so their action rates do not measure a speedup ratio.
+
+The active build resumed at approximately 2026-09-21 17:55 UTC in
+`build/logs/plico-full-build-balanced.log` (tool session 60127). This is the log
+to inspect next. All incremental outputs were retained across the controlled
+restarts. Inspect memory telemetry and owned processes before any intervention;
+a guard stop must be investigated, not blindly retried. Siso's action counter
+changes as cached actions are resolved and does not give a reliable percent of
+wall-clock work remaining. There is still no launched Plico browser.
+
+On completion, stop compilation before starting the guarded, isolated runtime
+qualification described in `docs/NATIVE-ACCEPTANCE.md`. Prioritize the visible
+navigation interaction and measure one small edit/rebuild/relaunch cycle before
+expanding implementation. The user authorized scheduled continuations of this
+task, but paid cloud provisioning still needs approval.

@@ -10,10 +10,11 @@ The development Mac has 24 GB RAM. An earlier build exhausted application memory
 Blink's Python binding generator creates a separate multiprocessing pool based
 on CPU count, independent of the outer build job count.
 
-- Use `scripts/build.sh` for compilation. It defaults to one local job and wraps
+- Use `scripts/build.sh` for compilation. It defaults to two local jobs and wraps
   the entire build tree in `scripts/memory-guard.py`. The user authorized measured
-  parallelism increases: `PLICO_BUILD_JOBS=2`, then at most 3 after observing
-  stable memory and swap. Do not raise memory thresholds to make a trial fit.
+  parallelism increases. Two jobs are the selected unattended setting; the
+  three-job trial reached 5.6 GiB, close to the 6 GiB stop threshold. Keep three
+  jobs for attended calibration only, and one as a lower-memory fallback. Do not raise memory thresholds to make a trial fit.
   Use explicit Siso `-local_jobs`, because autoninja may ignore `-j > 1` under
   the required `PYTHON_CPU_COUNT=1` generator safeguard.
 - Keep `PYTHON_CPU_COUNT=1`, Node's heap limit at 2048 MiB, and the guard active.

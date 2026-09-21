@@ -3,7 +3,7 @@ set -euo pipefail
 plico_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$plico_root"
 export PATH="$plico_root/build/venv/bin:/opt/homebrew/bin:$PATH"
-jobs="${PLICO_BUILD_JOBS:-1}"
+jobs="${PLICO_BUILD_JOBS:-2}"
 case "$jobs" in
   1|2|3) ;;
   *) echo 'PLICO_BUILD_JOBS must be 1, 2 or 3; higher concurrency is not qualified on this 24 GB host.' >&2; exit 2 ;;

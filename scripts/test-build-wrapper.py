@@ -48,7 +48,7 @@ class BuildWrapperTest(unittest.TestCase):
                     str(self.root / 'scripts/memory-guard.py'), '--log',
                     str(self.root / 'build/logs/build-memory.jsonl'), '--',
                     'python3', 'third_party/depot_tools/autoninja.py', '-C',
-                    'out/Default', '-local_jobs=' + (jobs or '1'),
+                    'out/Default', '-local_jobs=' + (jobs or '2'),
                     '-fs_state_compression_threads=1', 'chrome', 'chromedriver'])
 
     def test_unsafe_counts_are_rejected_before_starting_guard(self):
