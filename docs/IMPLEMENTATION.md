@@ -318,3 +318,15 @@ quota usage. Keep inherited workflows disabled, permit only its required
 checkout action, and do not provision paid runners. Actual runner acceptance
 must be checked; the billing documentation alone does not prove this account
 will execute the job.
+
+
+At 20:34 UTC, restricted Actions enablement was verified following explicit user
+approval. Only `actions/checkout@v4` is allowed, with GitHub-owned/verified blanket
+permissions disabled and all inherited workflows disabled manually. The free
+standard Ubuntu inspection [run 35651919829](https://github.com/1Pio/plico/actions/runs/35651919829)
+started successfully despite the reported exhausted personal minutes allowance.
+This proves runner acceptance, not successful inspection or cache reuse. Check
+its job logs next; the workflow uploads no artifacts and writes no Actions cache.
+The user also explicitly confirmed that the next local compilation must run
+independently of ChatGPT and qualify more workstation capacity within physical
+memory limits. Compilation remains stopped; no resource thresholds changed.
