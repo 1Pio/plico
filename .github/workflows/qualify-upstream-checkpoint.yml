@@ -34,6 +34,17 @@ jobs:
         run: python3 scripts/inspect-upstream-checkpoint.py
       - name: Restore separate checkpoint without external links
         run: python3 scripts/restore-upstream-checkpoint.py
+      - name: Preserve selected original manifests for comparison
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+          out = Path('build/reuse-qualification/restored/src/out/Default')
+          names = ['args.gn', 'toolchain.ninja', 'obj/base/base.ninja',
+                   'obj/ui/gfx/geometry/geometry.ninja', 'obj/net/net.ninja']
+          snapshot = {name: (out / name).read_text() for name in names}
+          Path('build/reuse-qualification/original-manifests.json').write_text(json.dumps(snapshot))
+          PYTHON
       - name: Regenerate manifest under a bounded memory guard
         working-directory: build/reuse-qualification/restored/src
         run: |
@@ -42,7 +53,23 @@ jobs:
             --log "$ROOT/build/logs/cloud-gn-memory.jsonl" \
             --max-build-mib 3072 --max-runtime-seconds 300 -- \
             buildtools/mac/gn gen out/Default --fail-on-unused-args
-      - name: Assess actual retained work without compiling
+      - name: Compare regenerated manifest content
+        run: |
+          python3 - <<'PYTHON'
+          import difflib, hashlib, json
+          from pathlib import Path
+          out = Path('build/reuse-qualification/restored/src/out/Default')
+          snapshot = json.loads(Path('build/reuse-qualification/original-manifests.json').read_text())
+          for name, before in snapshot.items():
+              after = (out / name).read_text()
+              changes = [line for line in difflib.unified_diff(before.splitlines(), after.splitlines(), n=0)
+                         if line.startswith(('+', '-')) and not line.startswith(('+++', '---'))]
+              print(json.dumps({'manifest': name, 'identical': before == after,
+                                'original_sha256': hashlib.sha256(before.encode()).hexdigest(),
+                                'regenerated_sha256': hashlib.sha256(after.encode()).hexdigest(),
+                                'changed_lines': len(changes), 'sample': [s[:500] for s in changes[:8]]}))
+          PYTHON
+      - name: Diagnose three representative retained objects without compiling
         working-directory: build/reuse-qualification/restored/src
         run: |
           ROOT="$GITHUB_WORKSPACE"
@@ -50,14 +77,16 @@ jobs:
             --log "$ROOT/build/logs/cloud-dryrun-memory.jsonl" \
             --max-build-mib 3072 --max-runtime-seconds 300 -- \
             third_party/siso/cipd/siso ninja -offline -n -C out/Default \
-            -local_jobs=1 -fs_state_compression_threads=1 chrome \
+            -local_jobs=1 -fs_state_compression_threads=1 -d explain \
+            obj/base/base/string_util.o obj/ui/gfx/geometry/geometry/rect.o \
+            obj/net/net/net_errors.o \
             > "$ROOT/build/reuse-qualification/cloud-dryrun.log" 2>&1
       - name: Retain bounded evidence in logs only
         if: always()
         run: |
           python3 - <<'PYTHON'
           import json
-          from collections import deque
+          from collections import deque, Counter
           from pathlib import Path
           for name in ('cloud-gn-memory.jsonl', 'cloud-dryrun-memory.jsonl'):
               path = Path('build/logs') / name
@@ -66,12 +95,20 @@ jobs:
                   print(name, json.dumps({'peak_mib': max((r.get('build_mib', 0) for r in rows), default=0), 'last_samples': rows[-2:]}))
           path = Path('build/reuse-qualification/cloud-dryrun.log')
           if path.exists():
-              lines = deque(maxlen=50)
+              lines = deque(maxlen=20)
+              diagnostics = []
               count = 0
+              commands = Counter()
               with path.open(errors='replace') as stream:
                   for line in stream:
                       count += 1
-                      lines.append(line.rstrip()[:4000])
-              print('dry_run_lines', count)
+                      line = line.rstrip()
+                      if line.startswith('sccache '):
+                          commands['compiler_commands'] += 1
+                      if ('explain:' in line or 'dirty' in line or 'changed' in line) and len(diagnostics) < 35:
+                          diagnostics.append(line[:500])
+                      lines.append(line[:500])
+              print('dry_run_lines', count, 'command_counts', dict(commands))
+              print('diagnostics', json.dumps(diagnostics))
               print('\n'.join(lines))
           PYTHON
