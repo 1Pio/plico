@@ -248,3 +248,56 @@ qualification described in `docs/NATIVE-ACCEPTANCE.md`. Prioritize the visible
 navigation interaction and measure one small edit/rebuild/relaunch cycle before
 expanding implementation. The user authorized scheduled continuations of this
 task, but paid cloud provisioning still needs approval.
+
+
+## Resource stop and checkpoint reuse investigation, 2026-09-21 20:00 UTC
+
+The earlier active-build paragraph is superseded. The two-job balanced build
+stopped at 19:22 UTC after about 1h27m, with 6,866 actions completed in that run.
+The guard recorded 34% free memory against its 35% floor. Build physical
+footprint was 5,291 MiB, the app family was 13,535 MiB, and swap was 7,795 MiB
+without recent growth. This was a resource stop, not an established compiler
+failure. Existing incremental output is retained. No compiler has been restarted.
+
+With the build stopped, the kernel still reports memorystatus level 2, which
+Apple's XNU definition calls Urgent (equivalent to Warning), and the desktop
+app family accounts for roughly 9.5 GiB of physical footprint. Current samples
+are in ignored `build/logs/checkpoint-latest.json`. Fan noise and observed build
+usage do not establish available RAM or a safe compiler-job maximum. The 6 GiB
+build ceiling and 14 GiB app-family ceiling are stop thresholds, not reserved
+allocations. None of the existing thresholds were raised.
+
+A public upstream ARM64 checkpoint exists for the exact pinned platform commit:
+[successful run 35283975532](https://github.com/imputnet/helium-macos/actions/runs/35283975532),
+artifact 10534986217, 6,867,963,157 bytes. Its ZIP directory contains a
+`build_src.tar.zst` of 6,876,100,218 bytes. The expected ZIP SHA256 is
+`d777ec2fafb4be162babbdf7c7b1b01210fb559940e763cca00fca7fba999ce2`.
+The packaging script archives `build/src`; the actual object inventory and
+successful reuse are still unverified until inspection completes.
+
+The production checkpoint uses official/noncomponent output, PGO phase 2,
+symbol level 1, sccache, and Xcode 26.0.1. Our component development build uses
+PGO 0, symbols 0, disabled PCH and Xcode 26.5. Do not copy these outputs over our
+current build. Reuse would need a separately qualified compatible production
+configuration, including SDK/toolchain paths and the eventual link footprint.
+The upstream run used Depot macOS runners; its throughput is not evidence for
+the free standard GitHub macOS runner or this Mac's safe concurrency.
+
+`scripts/inspect-upstream-checkpoint.py` streams and inventories the pinned
+archive, retains only allowlisted build metadata, and never restores its source
+or executes archive content. A fixture verified file/object counts, selected
+metadata and ignored symlinks. A manual free Ubuntu workflow is committed, but
+Actions remains disabled: automatic approval review rejected enabling an
+unrestricted action policy, and restricted enablement is awaiting user approval.
+Local inspection continues independently using four bounded network streams;
+tool session 77908 and `build/reuse-qualification/fetch-inspection.log` are the
+current inspection handles. Check this job before starting a duplicate fetch.
+
+After inspection, choose between a compatible checkpoint and the preserved local
+component build. To qualify more compiler jobs, first prepare build supervision
+that survives a desktop-app restart while retaining process ownership, global
+pressure/swap checks, serial generators and an aggregate build/app budget.
+Do not merely detach the current wrapper: its interactive guard deliberately
+stops when its supervising app exits. Do not kill the desktop app or unrelated
+processes. No cache speedup, increased compiler concurrency or running Plico UI
+has been demonstrated by this investigation.
