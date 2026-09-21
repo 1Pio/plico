@@ -24,10 +24,10 @@ restoration, isolation and upstream-update acceptance scenarios.
 | Build prerequisites and local Python environment | Installed |
 | Source retrieval | Pinned Git fallback completed; official lite archive returns HTTP 404 |
 | Pure navigation model and input routing | 15 host scenarios pass with ASan and UBSan |
-| Native build and UI | Baseline compilation in progress; no running plico UI yet |
+| Native build and UI | Upstream BrowserView object built; native source syntax checks pass; full baseline compiling; no running plico UI yet |
 | Modifier input, latch and MRU integration | Pending |
 | Native stack view and persistence | Pending |
-| Floating composer | Pending |
+| Floating composer | Native source drafted and compiler-checked; runtime qualification pending |
 | Native Glance and promotion | Pending |
 | Per-tab debugger status and stop | Pending |
 | Shortcut editing and back-to-opener behavior | Pending |
@@ -48,16 +48,20 @@ allocation per process was not captured before stopping.
 All subsequent builds use `scripts/build.sh`: one outer job,
 `PYTHON_CPU_COUNT=1`, a 2048 MiB Node heap cap, and a native macOS physical-footprint
 monitor over the build's process group and descendants. The guard stops at
-6 GiB build footprint, below 35% free system memory, or over 512 MiB new swap.
+6 GiB build footprint, 14 GiB total ChatGPT/Codex process-family footprint,
+below 35% free system memory, or over 512 MiB new swap. A lock prevents two guarded
+operations from compiling concurrently in the same build directory. If the host
+app exits, its guarded build stops.
 It requires at least 45% free memory before starting. It signals only identified build processes and their owned process groups, and
 preserves incremental output. Retained process start identities cover observed
 workers that create separate groups. Sampling runs once per second; this is a
 stop mechanism, not a kernel-enforced allocation cap or a sandbox for daemonizing
 programs.
 
-Seven low-memory process tests pass, covering normal exit, low-threshold stop,
+Nine low-memory process tests pass, covering normal exit, low-threshold stop,
 SIGINT/SIGTERM/SIGHUP cleanup, surviving detached workers, discovery failure, and
-PID reuse. The Python CPU limit also reached an actual Siso action. Independent
+PID reuse, the app-family threshold, and exclusive build locking. The Python CPU
+limit also reached an actual Siso action. Independent
 review exposed cleanup defects; the shutdown, discovery-failure and PID-identity
 regressions are now covered. This is evidence
 that the protections operate, not a promise that every Chromium compilation unit

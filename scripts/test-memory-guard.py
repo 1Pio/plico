@@ -152,6 +152,36 @@ time.sleep(1.5)
             group_signal.assert_not_called()
             pid_signal.assert_called_once_with(100, signal.SIGTERM)
 
+    def test_host_limit_refuses_child_launch(self):
+        if guard.host_app() is None:
+            self.skipTest("Not running within the desktop app")
+        with tempfile.TemporaryDirectory(prefix='plico-host-limit-') as temp:
+            root = Path(temp)
+            child_code = f"from pathlib import Path; Path({str(root / 'started')!r}).touch()"
+            result = subprocess.run([sys.executable, str(GUARD), '--max-host-mib', '1',
+                '--log', str(root / 'memory.jsonl'), '--', sys.executable, '-c', child_code],
+                capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('host app already uses', result.stderr)
+            self.assertFalse((root / 'started').exists())
+
+    def test_shared_directory_rejects_concurrent_guard(self):
+        with tempfile.TemporaryDirectory(prefix='plico-build-lock-') as temp:
+            root = Path(temp)
+            marker = root / 'started'
+            prefix = [sys.executable, str(GUARD), '--log', str(root / 'memory.jsonl'), '--']
+            child_code = f"from pathlib import Path; import time; Path({str(marker)!r}).touch(); time.sleep(2)"
+            first = subprocess.Popen(prefix + [sys.executable, '-c', child_code],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                wait_until(marker.exists)
+                second = subprocess.run(prefix + [sys.executable, '-c', 'pass'],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(second.returncode, 0)
+                self.assertIn('already using this build directory', second.stderr)
+            finally:
+                first.wait(timeout=10)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

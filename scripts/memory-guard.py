@@ -2,6 +2,7 @@
 """Run only this build's process group under conservative macOS memory limits."""
 import argparse
 import ctypes
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -71,11 +72,29 @@ def footprint(pids):
     return total / MIB, measured
 
 
-def breach(free, swap, baseline_swap, build_mib, args):
+def host_app():
+    pid = os.getpid()
+    for _ in range(32):
+        row = subprocess.check_output(
+            ["/bin/ps", "-p", str(pid), "-o", "ppid=,comm="], text=True).strip().split(maxsplit=1)
+        if len(row) != 2:
+            return None
+        parent, command = row
+        if command.endswith(("/ChatGPT.app/Contents/MacOS/ChatGPT", "/Codex.app/Contents/MacOS/Codex")):
+            return pid, process_identity(pid)
+        pid = int(parent)
+        if pid <= 1:
+            return None
+    return None
+
+
+def breach(free, swap, baseline_swap, build_mib, args, host_mib=None):
     if free < args.min_free_percent:
         return f"system free memory {free}% is below {args.min_free_percent}%"
     if build_mib > args.max_build_mib:
         return f"build physical footprint {build_mib:.0f} MiB exceeds {args.max_build_mib} MiB"
+    if host_mib is not None and host_mib > args.max_host_mib:
+        return f"host app and descendants use {host_mib:.0f} MiB, exceeding {args.max_host_mib} MiB"
     if swap - baseline_swap > args.max_swap_growth_mib:
         return f"swap grew by {swap - baseline_swap:.0f} MiB"
     return None
@@ -173,6 +192,7 @@ def stop_group(owned, delays=(10, 5, 5)):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--max-build-mib", type=int, default=6144)
+    parser.add_argument("--max-host-mib", type=int, default=14336)
     parser.add_argument("--min-free-percent", type=int, default=35)
     parser.add_argument("--max-swap-growth-mib", type=int, default=512)
     parser.add_argument("--log", type=Path, required=True)
@@ -181,6 +201,12 @@ def main():
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("a command is required")
+    args.log.parent.mkdir(parents=True, exist_ok=True)
+    lock = (args.log.parent / "memory-guard.lock").open("a")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise SystemExit("Another guarded operation is already using this build directory.")
     free, baseline_swap = system_memory()
     if free < args.min_free_percent + 10:
         raise SystemExit(f"Build held: free memory is {free}%; at least {args.min_free_percent + 10}% is required to start.")
@@ -188,11 +214,15 @@ def main():
     own, count = footprint({os.getpid()})
     if count != 1 or own <= 0:
         raise SystemExit("Cannot verify native process footprint accounting.")
+    host = host_app()
+    if host:
+        host_mib, _ = footprint(process_tree(None, {host[0]}))
+        if host_mib > args.max_host_mib:
+            raise SystemExit(f"Build held: host app already uses {host_mib:.0f} MiB.")
     env = os.environ.copy()
     env["PYTHON_CPU_COUNT"] = "1"
     env["NODE_OPTIONS"] = "--max-old-space-size=2048"
     env["GOMAXPROCS"] = "2"
-    args.log.parent.mkdir(parents=True, exist_ok=True)
     interrupted = []
     def on_signal(sig, frame):
         interrupted.append(sig)
@@ -213,9 +243,16 @@ def main():
                 free, swap = system_memory()
                 minimum_swap = min(minimum_swap, swap)
                 usage, count = footprint(pids)
+                host_mib = None
+                if host:
+                    if process_identity(host[0]) != host[1]:
+                        print("Host app exited; stopping owned build.", file=sys.stderr)
+                        return 75
+                    host_mib, _ = footprint(process_tree(None, {host[0]}))
                 log.write(json.dumps({"time": time.time(), "build_mib": round(usage, 1),
-                    "processes": count, "free_percent": free, "swap_mib": swap}) + "\n")
-                reason = breach(free, swap, minimum_swap, usage, args)
+                    "processes": count, "free_percent": free, "swap_mib": swap,
+                    "host_mib": round(host_mib, 1) if host_mib is not None else None}) + "\n")
+                reason = breach(free, swap, minimum_swap, usage, args, host_mib)
                 if reason:
                     print("Memory guard stopped build: " + reason, file=sys.stderr, flush=True)
                     return 75
