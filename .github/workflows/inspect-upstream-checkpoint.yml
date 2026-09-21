@@ -18,11 +18,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/inspect-upstream-checkpoint.py
-      - name: Retain small inspection evidence
-        uses: actions/upload-artifact@v4
-        with:
-          name: upstream-checkpoint-inventory
-          retention-days: 3
-          path: |
-            build/reuse-qualification/checkpoint-inventory.json
-            build/reuse-qualification/src__*
+      - name: Record selected configuration in job logs
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          root = Path('build/reuse-qualification')
+          for name in ('src__out__Default__args.gn',
+                       'src__third_party__llvm-build__Release+Asserts__cr_build_revision'):
+              path = root / name
+              if path.exists():
+                  print(name + ':')
+                  print(path.read_text()[:20000])
+          PYTHON

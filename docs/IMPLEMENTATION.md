@@ -301,3 +301,20 @@ Do not merely detach the current wrapper: its interactive guard deliberately
 stops when its supervising app exits. Do not kill the desktop app or unrelated
 processes. No cache speedup, increased compiler concurrency or running Plico UI
 has been demonstrated by this investigation.
+
+
+At 20:31 UTC, the local checkpoint fetch had exited after a network connection
+reset. Its journal records 1,425,620,992 completed bytes; the larger partial-file
+size does not prove other ranges completed. Keep that file and journal for a
+possible range-based retry. No source outputs were replaced. Kernel pressure
+remains level 2 and free-memory percentage 40, so no compiler was restarted.
+
+The user explicitly approved app-independent guarded compilation before the next
+build and permits a restricted free GitHub Actions inspection attempt. Standard
+public-repository runners are exempt from the private-repository minutes quota
+according to current GitHub billing documentation. The inspection workflow now
+retains its report in job logs rather than uploading artifacts, avoiding storage
+quota usage. Keep inherited workflows disabled, permit only its required
+checkout action, and do not provision paid runners. Actual runner acceptance
+must be checked; the billing documentation alone does not prove this account
+will execute the job.
