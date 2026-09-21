@@ -22,4 +22,5 @@ export SISO_PATH="$plico_root/build/src/third_party/siso/cipd/siso"
 cd build/src
 exec python3 "$plico_root/scripts/memory-guard.py" \
   --log "$plico_root/build/logs/build-memory.jsonl" \
-  -- python3 third_party/depot_tools/autoninja.py -C out/Default -j "$jobs" "${targets[@]}"
+  -- python3 third_party/depot_tools/autoninja.py -C out/Default -j "$jobs" \
+  -fs_state_compression_threads=1 "${targets[@]}"

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Small real-process regressions; no compiler or large allocation is started."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 import signal
@@ -56,6 +57,11 @@ def save_pid(root, name, pid):
                 for pid_file in root.glob("pid-*"):
                     pid, identity = map(int, pid_file.read_text().split(":"))
                     wait_until(lambda: guard.process_identity(pid) != identity)
+                if threshold and proc.returncode == 75:
+                    records = [json.loads(line) for line in (root / "memory.jsonl").read_text().splitlines()]
+                    stop = next(record for record in records if "stop_reason" in record)
+                    self.assertTrue(stop["owned_processes"])
+                    self.assertIn("executable", stop["owned_processes"][0])
                 return proc.returncode, stderr
             finally:
                 # Cleanup is independent of the tested guard if a regression fails.
@@ -75,6 +81,8 @@ def save_pid(root, name, pid):
 import os, multiprocessing
 assert multiprocessing.cpu_count() == 1
 assert os.environ['NODE_OPTIONS'] == '--max-old-space-size=2048'
+assert os.environ['GRIT_DISABLE_MULTIPROCESSING'] == '1'
+assert os.environ['GOMEMLIMIT'] == '1536MiB'
 """
         self.assertEqual(self.run_guard(payload)[0], 0)
 

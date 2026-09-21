@@ -72,6 +72,22 @@ def footprint(pids):
     return total / MIB, measured
 
 
+def process_breakdown(pids):
+    """Attribute a stop to owned executable paths, without capturing arguments."""
+    library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    library.proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+    rows = []
+    for pid in pids:
+        usage, measured = footprint({pid})
+        if not measured:
+            continue
+        path = ctypes.create_string_buffer(4096)
+        length = library.proc_pidpath(pid, path, len(path))
+        rows.append({"pid": pid, "mib": round(usage, 1),
+                     "executable": path.value.decode(errors="replace") if length > 0 else None})
+    return sorted(rows, key=lambda row: row["mib"], reverse=True)
+
+
 def host_app():
     pid = os.getpid()
     for _ in range(32):
@@ -221,8 +237,12 @@ def main():
             raise SystemExit(f"Build held: host app already uses {host_mib:.0f} MiB.")
     env = os.environ.copy()
     env["PYTHON_CPU_COUNT"] = "1"
+    # GRIT forks a copy of its parsed resource tree even with one CPU worker.
+    # Its supported serial mode avoids the extra process and copy-on-write peak.
+    env["GRIT_DISABLE_MULTIPROCESSING"] = "1"
     env["NODE_OPTIONS"] = "--max-old-space-size=2048"
     env["GOMAXPROCS"] = "2"
+    env["GOMEMLIMIT"] = "1536MiB"  # Go's soft GC target, not an allocation cap.
     interrupted = []
     def on_signal(sig, frame):
         interrupted.append(sig)
@@ -255,6 +275,11 @@ def main():
                 reason = breach(free, swap, minimum_swap, usage, args, host_mib)
                 if reason:
                     print("Memory guard stopped build: " + reason, file=sys.stderr, flush=True)
+                    try:
+                        log.write(json.dumps({"time": time.time(), "stop_reason": reason,
+                            "owned_processes": process_breakdown(owned.known_live())}) + "\n")
+                    except Exception as error:
+                        print(f"Stop attribution unavailable: {error}", file=sys.stderr)
                     return 75
                 time.sleep(1)
     finally:

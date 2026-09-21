@@ -57,5 +57,6 @@ PY
 cd "$_src_dir"
 ___helium_install_cipd_deps
 ___helium_configure_siso
-"$_gn_path" gen "$_out_dir" --fail-on-unused-args --export-compile-commands
+python3 "$_root_dir/scripts/memory-guard.py" --log "$_root_dir/build/logs/prepare-gn-memory.jsonl" \
+  -- "$_gn_path" gen "$_out_dir" --fail-on-unused-args --export-compile-commands
 printf '%s\n' "$fingerprint" > "$marker"

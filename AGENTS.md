@@ -14,6 +14,10 @@ on CPU count, independent of the outer build job count.
   the entire build tree in `scripts/memory-guard.py`.
 - Keep `PYTHON_CPU_COUNT=1`, Node's heap limit at 2048 MiB, and the guard active.
   Verify that Siso propagates the Python limit before resuming Blink generation.
+- Keep GRIT's supported serial mode (`GRIT_DISABLE_MULTIPROCESSING=1`), Go's
+  soft GC target (`GOMEMLIMIT=1536MiB`) and one Siso state-compression thread.
+  A second guarded stop occurred during resource generation despite one outer
+  job; GRIT otherwise forks a resource-tree copy even with one Python worker.
 - Stop the owned build if its physical footprint exceeds 6 GiB, the ChatGPT/Codex
   process family exceeds 14 GiB, system free
   memory drops below 35%, or swap grows by more than 512 MiB. Start only above
