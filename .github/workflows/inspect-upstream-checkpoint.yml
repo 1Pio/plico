@@ -1,0 +1,28 @@
+name: Inspect pinned upstream checkpoint
+
+on: workflow_dispatch
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Inspect public artifact without compiling or extracting its tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/inspect-upstream-checkpoint.py
+      - name: Retain small inspection evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-checkpoint-inventory
+          retention-days: 3
+          path: |
+            build/reuse-qualification/checkpoint-inventory.json
+            build/reuse-qualification/src__*
