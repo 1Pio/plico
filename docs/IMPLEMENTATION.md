@@ -385,3 +385,41 @@ a physical maximum of the Mac. Do not blindly retry three workers. Evidence:
 `build/qualification/supervision/three-job-calibration.json` and
 `build/logs/plico-unattended-20260921T211137Z.log`. Prioritize completing the
 checkpoint download and testing isolated reuse before another long compilation.
+
+## Verified checkpoint restoration and matching-SDK qualification
+
+At 21:47 UTC September 21, the entire local archive passed its pinned SHA256
+check and all 815,950 regular files were restored under
+`build/reuse-qualification/restored/`, separately from the preserved component
+build. Five external upstream-runner SDK/log symlinks were recorded but omitted.
+Five restoration tests cover digest failure, existing-directory protection,
+path escape rejection, external-link omission and identified partial resumption.
+The verified tree occupies 31,211,558,896 file bytes. The restoration requires
+35 GiB available, enough for its known 29.1 GiB payload plus a reserve.
+
+The first guarded Siso dry run reported zero steps because the GN manifest
+needed regeneration; that is not cache-reuse proof. A separate diagnostic graph
+with only the regeneration edge omitted reached dependencies and failed on the
+missing upstream Xcode 26 `gperf` path. No compilation or successful reuse has
+been demonstrated locally. Evidence: `checkpoint-dryrun.log`,
+`checkpoint-probe.log` and corresponding guarded memory logs.
+
+The free standard macOS [environment inspection](https://github.com/1Pio/plico/actions/runs/35658706283)
+actually reported ARM64, 7 GiB RAM, three CPUs, 43 GiB available disk, Xcode
+26.0.1 (17A400) and SDK 26.0 (25A352). This matches the upstream SDK and offers a
+bounded alternative for qualification. Its resources do not yet establish that
+a production relink will fit. A manual `qualify-upstream-checkpoint.yml` job
+restores the checkpoint, regenerates GN with that exact SDK, and dry-runs Siso
+under a stricter 3 GiB build guard. It compiles nothing and retains bounded logs
+only, with no artifact/cache uploads or paid runners. Standard public-repository
+runner billing and image software were checked against
+[GitHub's runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
+and its [macOS image manifest](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-arm64-Readme.md).
+
+The preserved component build resumed with two workers under launchd at 21:48
+UTC, following investigation of the three-worker combined-budget stop. All
+original memory thresholds remain. Its log is
+`build/logs/plico-unattended-20260921T214759Z.log`. Inspect it before any further
+build or source overlays; stop and verify cleanup before changing strategy.
+There remains no running Plico browser, native UI proof, or upstream upgrade and
+rollback qualification.
