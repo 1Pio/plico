@@ -41,7 +41,7 @@ dependency environments stay under the ignored `build/` directory. Do not point
 a development build at an installed browser's profile.
 
 On the development Mac, compile only with `bash scripts/build.sh`. This wrapper
-limits the build to one worker and monitors memory, including the host app and
+limits local compiler concurrency and monitors memory, including the host app and
 its descendants. The upstream `he build` and release scripts do not provide
 these protections. Resource-limit stops preserve incremental output and require
 investigation before another attempt. See [AGENTS.md](AGENTS.md).

@@ -24,7 +24,7 @@ restoration, isolation and upstream-update acceptance scenarios.
 | Build prerequisites and local Python environment | Installed |
 | Source retrieval | Pinned Git fallback completed; official lite archive returns HTTP 404 |
 | Pure navigation model and input routing | 18 host scenarios pass with ASan and UBSan |
-| Native build and UI | Upstream BrowserView object built; native source syntax checks pass; integrated Plico build in progress; no running plico UI yet |
+| Native build and UI | Patched upstream and native objects compile; integrated Plico build in progress; no running plico UI yet |
 | Modifier input, latch and MRU integration | Native source drafted and compiler-checked; runtime qualification pending |
 | Native stack view and persistence | Native source and session hooks drafted; runtime qualification pending |
 | Floating composer | Native source drafted and compiler-checked; runtime qualification pending |
@@ -45,7 +45,7 @@ its own worker pool, independently of Siso's outer job limit. The default on thi
 host is 15. This is a concrete source of hidden parallelism; the exact peak
 allocation per process was not captured before stopping.
 
-All subsequent builds use `scripts/build.sh`: one outer job,
+All subsequent builds use `scripts/build.sh`: one local compiler job,
 `PYTHON_CPU_COUNT=1`, a 2048 MiB Node heap cap, and a native macOS physical-footprint
 monitor over the build's process group and descendants. The guard stops at
 6 GiB build footprint, 14 GiB total ChatGPT/Codex process-family footprint,
@@ -70,6 +70,8 @@ arguments. The nine guard tests and a real Siso environment probe pass. The
 interrupted components resource target then completed in 6.7 seconds under the
 same thresholds, with approximately 1.4 GiB maximum sampled build footprint.
 This does not establish a bound for every remaining build action.
+Siso reports separate compiler and action pools, each with capacity one; they
+can overlap. The aggregate guard covers both and their child processes.
 
 Nine low-memory process tests pass, covering normal exit, low-threshold stop,
 SIGINT/SIGTERM/SIGHUP cleanup, surviving detached workers, discovery failure, and
@@ -116,8 +118,14 @@ This is patch validation, not the upstream-update rehearsal.
 Seven native translation units pass serial syntax checks with the pinned Chromium
 compiler and generated headers. The downstream patch is applied to the isolated
 source and GN has generated 32,360 targets. Regenerating the patch after applying
-it produces identical bytes. The full app, generated Mojo/TypeScript changes,
-branding and Sparkle changes have not completed their integrated build.
+it produces identical bytes. The nine selected native/renderer objects compiled
+with 347 prerequisite actions in 3 minutes 30 seconds, including generated Mojo
+interfaces and Blink's Option-click route. The other 14 patched upstream objects
+then compiled with their prerequisites in 49 seconds. This covers BrowserView,
+AppKit dispatch, session and tab restoration, shortcuts, navigation delegation,
+debugger attachment policy, profile path and keychain code. Sparkle is excluded
+by this development configuration's disabled updater. The full application,
+linking, packaging and settings TypeScript qualification remain incomplete.
 The staging UI remains behind `--plico-native-navigation`; Glance link routing
 also needs `--enable-blink-features=PlicoGlance`. Existing browser profiles are
 untouched. A complete unmodified baseline build remains an open comparison gate.
