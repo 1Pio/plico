@@ -1,0 +1,70 @@
+name: Qualify upstream checkpoint on matching macOS SDK
+
+on: workflow_dispatch
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  qualify:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.0.1.app/Contents/Developer
+      PYTHON_CPU_COUNT: '1'
+      GRIT_DISABLE_MULTIPROCESSING: '1'
+      GOMAXPROCS: '2'
+      GOMEMLIMIT: 1024MiB
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Confirm matching SDK and sufficient disk space
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(xcrun --sdk macosx --show-sdk-version)" = 26.0
+          test "$(xcrun --sdk macosx --show-sdk-build-version)" = 25A352
+          df -h "$RUNNER_TEMP"
+          mkdir -p build/logs
+      - name: Verify exact upstream checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/inspect-upstream-checkpoint.py
+      - name: Restore separate checkpoint without external links
+        run: python3 scripts/restore-upstream-checkpoint.py
+      - name: Regenerate manifest under a bounded memory guard
+        working-directory: build/reuse-qualification/restored/src
+        run: |
+          ROOT="$GITHUB_WORKSPACE"
+          python3 "$ROOT/scripts/memory-guard.py" \
+            --log "$ROOT/build/logs/cloud-gn-memory.jsonl" \
+            --max-build-mib 3072 --max-runtime-seconds 300 -- \
+            buildtools/mac/gn gen out/Default --fail-on-unused-args
+      - name: Assess actual retained work without compiling
+        working-directory: build/reuse-qualification/restored/src
+        run: |
+          ROOT="$GITHUB_WORKSPACE"
+          python3 "$ROOT/scripts/memory-guard.py" \
+            --log "$ROOT/build/logs/cloud-dryrun-memory.jsonl" \
+            --max-build-mib 3072 --max-runtime-seconds 300 -- \
+            third_party/siso/cipd/siso ninja -offline -n -C out/Default \
+            -local_jobs=1 -fs_state_compression_threads=1 -d explain chrome \
+            > "$ROOT/build/reuse-qualification/cloud-dryrun.log" 2>&1
+      - name: Retain bounded evidence in logs only
+        if: always()
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+          for name in ('cloud-gn-memory.jsonl', 'cloud-dryrun-memory.jsonl'):
+              path = Path('build/logs') / name
+              if path.exists():
+                  rows = [json.loads(line) for line in path.read_text().splitlines()]
+                  print(name, json.dumps({'peak_mib': max((r.get('build_mib', 0) for r in rows), default=0), 'last_samples': rows[-2:]}))
+          path = Path('build/reuse-qualification/cloud-dryrun.log')
+          if path.exists():
+              lines = path.read_text().splitlines()
+              print('dry_run_lines', len(lines))
+              print('\n'.join(lines[-50:]))
+          PYTHON
