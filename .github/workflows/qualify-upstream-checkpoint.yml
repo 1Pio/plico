@@ -34,6 +34,32 @@ jobs:
         run: python3 scripts/inspect-upstream-checkpoint.py
       - name: Restore object probe without external links, link cache or debug symbols
         run: python3 scripts/restore-upstream-checkpoint.py --object-probe
+      - name: Recreate original input paths only on the disposable runner
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$(id -un)" = runner
+          python3 - <<'PYTHON'
+          import os, subprocess
+          from pathlib import Path
+          source = Path('build/reuse-qualification/restored/src').resolve(strict=True)
+          original = Path('/Users/runner/work/helium-macos/helium-macos/build/src')
+          original.parent.mkdir(parents=True, exist_ok=True)
+          if os.path.lexists(original):
+              if original.resolve(strict=True) != source:
+                  raise RuntimeError('Existing source path has a different target; refusing replacement')
+          else:
+              original.symlink_to(source, target_is_directory=True)
+          xcode = Path('/Applications/Xcode_26.0.1.app').resolve(strict=True)
+          original_xcode = Path('/Applications/Xcode_26.app')
+          if os.path.lexists(original_xcode):
+              if original_xcode.resolve(strict=True) != xcode:
+                  raise RuntimeError('Existing Xcode path differs; refusing replacement')
+          else:
+              subprocess.run(['sudo', 'ln', '-s', str(xcode), str(original_xcode)], check=True)
+          assert original.resolve(strict=True) == source
+          assert original_xcode.resolve(strict=True) == xcode
+          print('Original source and exact-version Xcode paths resolve to the verified inputs')
+          PYTHON
       - name: Preserve selected original manifests for comparison
         run: |
           python3 - <<'PYTHON'

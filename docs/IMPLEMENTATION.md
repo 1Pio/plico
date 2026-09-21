@@ -484,3 +484,13 @@ The object probe omits downstream ThinLTO cache and debug symbols to fit the
 standard runner. Full restoration stays available and cannot be mixed with a
 partial probe resume. No application has been launched or qualified by these
 archive diagnostics; native browser acceptance remains pending.
+
+
+The [timestamp recovery probe](https://github.com/1Pio/plico/actions/runs/35667571733)
+restored all 46,451 recorded object timestamps after verifying content hashes.
+The dry run still scheduled the same 2,063 compiler commands: stale-mtime
+explanations were replaced by missing inputs under the original runner's absolute
+source path. Thus timestamp repair alone is insufficient. A follow-up recreates
+those paths only as checked aliases inside the disposable runner, including the
+matching Xcode bundle path. It refuses to replace any existing different target.
+Dependency records, object bytes and the developer's installed SDK remain intact.
