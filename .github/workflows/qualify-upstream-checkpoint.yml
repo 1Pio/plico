@@ -32,8 +32,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/inspect-upstream-checkpoint.py
-      - name: Restore separate checkpoint without external links
-        run: python3 scripts/restore-upstream-checkpoint.py
+      - name: Restore object probe without external links, link cache or debug symbols
+        run: python3 scripts/restore-upstream-checkpoint.py --object-probe
       - name: Preserve selected original manifests for comparison
         run: |
           python3 - <<'PYTHON'

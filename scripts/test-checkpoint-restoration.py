@@ -8,6 +8,8 @@ from pathlib import Path
 import subprocess
 import tarfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 import zipfile
 from scratch import scratch_directory
 
@@ -71,6 +73,43 @@ class RestorationTest(unittest.TestCase):
         marker.write_text(json.dumps({'zip_sha256': digest}))
         restore.restore(archive, self.destination, digest, resume=True)
         self.assertEqual((self.destination / 'src/example.txt').read_text(), 'test')
+
+    def test_probe_omits_only_link_cache_and_debug_symbols(self):
+        for i, (name, omitted) in enumerate([
+            ('src/out/Default/thinlto-cache/value', True),
+            ('src/out/Default/Helium Framework.dSYM/Contents/data', True),
+            ('src/out/Default/obj/base/example.o', False),
+            ('src/out/Default/gen/example.h', False),
+            ('src/base/example.cc', False),
+            ('src/third_party/example.dSYM/required.cc', False),
+        ]):
+            with self.subTest(name=name):
+                archive, digest = self.archive(name)
+                destination = self.root / f'case-{i}'
+                report = restore.restore(archive, destination, digest, object_probe=True)
+                self.assertEqual((destination / name).exists(), not omitted)
+                self.assertEqual(report['probe_outputs_omitted']['files'], int(omitted))
+                self.assertEqual(report['restored_file_bytes'], 0 if omitted else 4)
+                self.assertTrue(report['object_probe'])
+
+    def test_probe_mode_cannot_resume_full_restoration(self):
+        archive, digest = self.archive()
+        self.destination.mkdir()
+        (self.destination / 'restoration-in-progress.json').write_text(
+            json.dumps({'zip_sha256': digest}))
+        with self.assertRaisesRegex(RuntimeError, 'different restoration mode'):
+            restore.restore(archive, self.destination, digest, resume=True, object_probe=True)
+
+    def test_disk_gate_retains_reserve_for_probe(self):
+        archive, digest = self.archive()
+        with patch.object(restore.shutil, 'disk_usage', return_value=SimpleNamespace(free=30 * 1024**3)):
+            with self.assertRaisesRegex(RuntimeError, '35 GiB'):
+                restore.restore(archive, self.destination, digest)
+            self.assertFalse(self.destination.exists())
+            restore.restore(archive, self.destination, digest, object_probe=True)
+        with patch.object(restore.shutil, 'disk_usage', return_value=SimpleNamespace(free=30 * 1024**3 - 1)):
+            with self.assertRaisesRegex(RuntimeError, '30 GiB'):
+                restore.restore(archive, self.root / 'too-small', digest, object_probe=True)
 
     def test_digest_failure_creates_no_destination(self):
         archive, _ = self.archive()
