@@ -62,6 +62,10 @@ def readiness_reason(free, pressure, combined_mib, args, ac=True):
         return f"free memory is {free}%; at least {args.min_free_percent + 10}% is required to start"
     if combined_mib > args.max_host_mib:
         return f"host app and build use {combined_mib:.0f} MiB, exceeding {args.max_host_mib} MiB"
+    if args.independent and combined_mib + args.max_build_mib > args.max_host_mib:
+        available = args.max_host_mib - combined_mib
+        return (f"only {available:.0f} MiB remains within the combined app/build budget; "
+                f"{args.max_build_mib} MiB is required before starting")
     if args.require_ac_power and not ac:
         return "waiting for AC power"
     return None

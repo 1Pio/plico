@@ -34,7 +34,7 @@ guard.kernel_pressure = lambda: 1
 sys.exit(guard.main())
 ''')
 arguments = ['/usr/bin/caffeinate', '-s', sys.executable, str(probe),
-             '--independent', '--max-runtime-seconds', '20',
+             '--independent', '--max-build-mib', '64', '--max-runtime-seconds', '20',
              '--log', str(OUT / (label + '.jsonl')), '--status', str(status),
              '--', sys.executable, '-c', 'import time; time.sleep(60)']
 with plist.open('wb') as stream:

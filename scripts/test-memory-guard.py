@@ -235,7 +235,7 @@ time.sleep(1.5)
 
     def test_readiness_keeps_each_existing_limit_and_ac_gate(self):
         args = SimpleNamespace(min_free_percent=35, max_host_mib=14336,
-            require_ac_power=True, max_build_mib=6144, max_swap_growth_mib=512)
+            require_ac_power=True, max_build_mib=6144, max_swap_growth_mib=512, independent=False)
         self.assertIsNone(guard.readiness_reason(45, 1, 14336, args))
         for free, pressure, mib, ac in ((44,1,1,True), (80,2,1,True),
                                       (80,4,1,True), (80,1,14337,True), (80,1,1,False)):
@@ -243,6 +243,29 @@ time.sleep(1.5)
         self.assertIsNotNone(guard.breach(80, 513, 0, 1, args, 1))
         self.assertIsNotNone(guard.breach(80, 0, 0, 6145, args, 1))
         self.assertIsNotNone(guard.breach(80, 0, 0, 1, args, 14337))
+
+    def test_independent_start_reserves_full_build_allowance(self):
+        args = SimpleNamespace(min_free_percent=35, max_host_mib=14336,
+            require_ac_power=True, max_build_mib=6144, independent=True)
+        self.assertIsNotNone(guard.readiness_reason(80, 1, 9500, args))
+        self.assertIsNotNone(guard.readiness_reason(80, 1, 8193, args))
+        self.assertIsNone(guard.readiness_reason(80, 1, 8192, args))
+
+    def test_insufficient_combined_headroom_never_starts_payload(self):
+        overrides = r"""
+guard.host_app = lambda: None
+guard.app_processes = lambda: set()
+guard.footprint = lambda pids: (9500, 1)
+original_popen = guard.subprocess.Popen
+def forbid_payload(*args, **kwargs):
+    if kwargs.get('start_new_session'):
+        raise AssertionError('payload spawn attempted')
+    return original_popen(*args, **kwargs)
+guard.subprocess.Popen = forbid_payload
+"""
+        code, stderr = self.run_guard('pass', flags=('--independent',), overrides=overrides)
+        self.assertEqual(code, 75, stderr)
+        self.assertNotIn('payload spawn attempted', stderr)
 
     def test_app_discovery_reconciles_new_instances_by_start_identity(self):
         with patch.object(guard.subprocess, 'check_output', return_value='10 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n11 /other/app\n'), \

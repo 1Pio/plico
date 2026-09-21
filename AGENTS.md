@@ -38,6 +38,10 @@ on CPU count, independent of the outer build job count.
   This one-shot launchd job survives app exit, waits up to 12 hours for AC power
   and 15 seconds of stable start headroom, and never automatically restarts a
   failed build. Use its `status` and `stop` commands for this owned job only.
+- Independent preflight also reserves the full 6 GiB build allowance within the
+  unchanged 14 GiB combined budget. It waits while app families and the guard
+  exceed 8 GiB, even if global pressure is Normal. This prevents repeating the
+  observed single-worker failure with the desktop app already using 9 GiB.
 - Independent accounting unions the build, guard and all discovered ChatGPT/Codex
   app families under the same 14 GiB ceiling, including after an app restart.
   Kernel Warning/Critical pressure also prevents startup or stops a running job.

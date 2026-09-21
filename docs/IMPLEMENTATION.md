@@ -423,3 +423,39 @@ original memory thresholds remain. Its log is
 build or source overlays; stop and verify cleanup before changing strategy.
 There remains no running Plico browser, native UI proof, or upstream upgrade and
 rollback qualification.
+
+## Combined-budget gate and bounded cloud retry, 2026-09-21 22:20 UTC
+
+The resumed two-worker run stopped after 286 seconds and 221 completed actions,
+with zero compiler failures. Its combined footprint reached 14,607 MiB; the
+largest Clang used 2,171 MiB, the second 1,073 MiB and Siso 2,052 MiB. A subsequent
+single-worker run also stopped: 34 actions completed, zero compiler failures,
+combined footprint 14,435 MiB, including Clang at 2,848 MiB and Siso at 2,079 MiB.
+Kernel pressure stayed Normal and swap did not grow in either run. All observed
+owned workers exited. Lowering worker count alone cannot reliably fit the current
+roughly 9.4 GiB desktop-app footprint under the unchanged combined ceiling.
+
+Independent preflight now reserves the full existing 6 GiB build allowance under
+the existing 14 GiB combined cap, requiring app families plus guard <=8 GiB before
+starting. This is a waiting condition, not an automatic restart after failure.
+The local job can resume once sufficient headroom exists, including across a
+user-initiated ChatGPT restart. The user was asked to restart ChatGPT when back;
+project instructions prohibit doing it on their behalf. No unrelated app was
+stopped. Eighteen guard tests and the live launchd/cleanup probe passed. Review
+caught a weak no-spawn regression; its corrected test deterministically fails
+when the reservation branch is removed and passes with it present. Evidence is
+under `build/qualification/supervision/` and `build/logs/test-reserved-headroom*`.
+
+Matching-SDK [run 35659309122](https://github.com/1Pio/plico/actions/runs/35659309122)
+verified/restored the archive and regenerated GN successfully (32,275 targets).
+Its dry run stopped at the stricter 3 GiB cloud cap: Siso reached 3,088 MiB while
+kernel pressure was Normal, free memory 75% and swap unchanged. Thus the matching
+SDK is usable, but successful cache reuse is still unproved. The diagnostic
+collector also failed on non-UTF8 bytes; it now streams with replacement decoding
+and retains bounded lines instead of reading the whole output at once.
+
+The retry [run 35661581121](https://github.com/1Pio/plico/actions/runs/35661581121)
+bounds Siso's documented step/preprocessing/scandeps/thread/cache concurrency and
+omits verbose explanation output. All memory stop thresholds remain unchanged.
+It is still a free dry-run qualification, not compilation or native acceptance.
+Check its actual outcome before claiming any cache benefit or retrying again.
