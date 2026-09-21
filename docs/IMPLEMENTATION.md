@@ -45,7 +45,7 @@ its own worker pool, independently of Siso's outer job limit. The default on thi
 host is 15. This is a concrete source of hidden parallelism; the exact peak
 allocation per process was not captured before stopping.
 
-All subsequent builds use `scripts/build.sh`: one local compiler job,
+All subsequent builds use `scripts/build.sh`: conservative local parallelism,
 `PYTHON_CPU_COUNT=1`, a 2048 MiB Node heap cap, and a native macOS physical-footprint
 monitor over the build's process group and descendants. The guard stops at
 6 GiB build footprint, 14 GiB total ChatGPT/Codex process-family footprint,
@@ -70,8 +70,9 @@ arguments. The nine guard tests and a real Siso environment probe pass. The
 interrupted components resource target then completed in 6.7 seconds under the
 same thresholds, with approximately 1.4 GiB maximum sampled build footprint.
 This does not establish a bound for every remaining build action.
-Siso reports separate compiler and action pools, each with capacity one; they
-can overlap. The aggregate guard covers both and their child processes.
+Siso reports separate compiler and action pools; they can overlap. The aggregate
+guard covers both and their child processes. In the two-job trial, Siso confirms
+local concurrency two while action, link and bundle pools retain capacity one.
 
 Nine low-memory process tests pass, covering normal exit, low-threshold stop,
 SIGINT/SIGTERM/SIGHUP cleanup, surviving detached workers, discovery failure, and
@@ -193,3 +194,35 @@ does not pass the rehearsal. Keep a rollback copy and isolate test profiles.
 - The composer owns its text-editing commands. Outside-click dismissal consumes
   the click rather than activating the website underneath.
 - No decorative navigation animation; short interruptible overflow scrolling only.
+
+## Parallelism calibration, 2026-09-21
+
+The user authorized safely increasing compilation parallelism, retaining all
+memory safeguards. The wrapper still defaults to one local job and accepts
+explicit values 1 through 3. It now passes Siso's `-local_jobs` directly: the
+upstream autoninja conversion can ignore `-j 2` when `PYTHON_CPU_COUNT=1`. The
+generator CPU limit, GRIT serial mode, heap limits, one-second footprint guard,
+exclusive lock and stop thresholds are unchanged. Trial results are recorded
+below before choosing unattended concurrency.
+
+The two-job trial completed 171 actions in 4m12s before a deliberate graceful
+stop for the next trial (zero failed actions). Across 250 seconds of guard
+samples, build footprint peaked at 4,073 MiB; host-family footprint peaked at
+11,343 MiB; system free percentage stayed at 71% or higher; swap stayed at
+7,867.25 MiB. Siso confirmed local capacity two and action/link/bundle capacity
+one. Four new wrapper regression scenarios pass, covering supported job counts,
+rejection of unsafe values, rejection of flag overrides in target arguments, and
+preservation of the memory guard for narrow targets. These are short calibration
+results, not a guaranteed memory bound for later Chromium units.
+
+The three-job trial started at 2026-09-21 17:50:44 UTC and continues in
+`build/logs/plico-full-build-jobs3.log`. Aggregate telemetry stays in
+`build/logs/build-memory.jsonl`. Siso confirms local capacity three and
+action/link/bundle capacity one. Neither the guard nor its thresholds changed.
+Source overlays must not be applied while compilation runs.
+
+Upstream remains at `0.17.2.1` on 2026-09-21. After native acceptance, rehearse
+a real older-to-current release transition if no newer release exists; do not
+confuse a same-revision patch roundtrip with an upgrade. The previous release
+is `0.17.1.1`. Keep separate source/build/profile state and account for disk
+capacity before preparing that comparison.
