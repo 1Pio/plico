@@ -373,3 +373,15 @@ was 71%, app families used 9,537 MiB, and swap remained 7,651 MiB. No compiler w
 running. The next compilation must use the launchd controller and preserve the
 existing output, serial generators and resource thresholds. Qualification of
 higher throughput is still pending, alongside cache reuse and native UI proof.
+
+
+At 21:12 UTC, the first actual independent three-job calibration stopped after
+60 seconds: 92 actions completed, zero compiler failures. Peak build footprint
+was 5,080 MiB and combined app/build footprint reached 14,499 MiB, crossing the
+14,336 MiB ceiling. Kernel pressure stayed Normal, reported free memory stayed
+at least 71%, and swap did not grow. Every observed owned worker exited. This
+establishes the combined-budget constraint with the current app footprint, not
+a physical maximum of the Mac. Do not blindly retry three workers. Evidence:
+`build/qualification/supervision/three-job-calibration.json` and
+`build/logs/plico-unattended-20260921T211137Z.log`. Prioritize completing the
+checkpoint download and testing isolated reuse before another long compilation.
