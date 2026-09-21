@@ -36,12 +36,14 @@ class GestureRouter {
   void SetEditorOwnsInput(bool owns);
   void SetRevealDelay(int milliseconds);
   GestureResult PointerSelect(TabId tab);
+  GestureResult PointerSelectStack(int slot);
   std::optional<std::int64_t> reveal_deadline() const { return deadline_; }
   bool editor_owns_input() const { return editor_; }
 
  private:
   NavigatorModel& model_;
   unsigned modifiers_ = 0;
+  unsigned gesture_owner_ = 0;
   int reveal_delay_ = 150;
   bool command_bare_ = false;
   bool latch_tap_ = false;

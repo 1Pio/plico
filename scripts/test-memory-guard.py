@@ -6,7 +6,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
-import tempfile
+from scratch import scratch_directory
 import time
 import unittest
 from unittest.mock import patch
@@ -28,7 +28,7 @@ def wait_until(predicate, timeout=8):
 
 class MemoryGuardTest(unittest.TestCase):
     def run_guard(self, payload, *, interrupt=None, threshold=None):
-        with tempfile.TemporaryDirectory(prefix="plico-guard-test-") as temp:
+        with scratch_directory(prefix="plico-guard-test-") as temp:
             root = Path(temp)
             payload = f"""
 import importlib.util
@@ -155,7 +155,7 @@ time.sleep(1.5)
     def test_host_limit_refuses_child_launch(self):
         if guard.host_app() is None:
             self.skipTest("Not running within the desktop app")
-        with tempfile.TemporaryDirectory(prefix='plico-host-limit-') as temp:
+        with scratch_directory(prefix='plico-host-limit-') as temp:
             root = Path(temp)
             child_code = f"from pathlib import Path; Path({str(root / 'started')!r}).touch()"
             result = subprocess.run([sys.executable, str(GUARD), '--max-host-mib', '1',
@@ -166,7 +166,7 @@ time.sleep(1.5)
             self.assertFalse((root / 'started').exists())
 
     def test_shared_directory_rejects_concurrent_guard(self):
-        with tempfile.TemporaryDirectory(prefix='plico-build-lock-') as temp:
+        with scratch_directory(prefix='plico-build-lock-') as temp:
             root = Path(temp)
             marker = root / 'started'
             prefix = [sys.executable, str(GUARD), '--log', str(root / 'memory.jsonl'), '--']

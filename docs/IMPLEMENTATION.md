@@ -23,14 +23,14 @@ restoration, isolation and upstream-update acceptance scenarios.
 | Registered fork and isolated checkout | Verified |
 | Build prerequisites and local Python environment | Installed |
 | Source retrieval | Pinned Git fallback completed; official lite archive returns HTTP 404 |
-| Pure navigation model and input routing | 15 host scenarios pass with ASan and UBSan |
+| Pure navigation model and input routing | 18 host scenarios pass with ASan and UBSan |
 | Native build and UI | Upstream BrowserView object built; native source syntax checks pass; full baseline compiling; no running plico UI yet |
-| Modifier input, latch and MRU integration | Pending |
-| Native stack view and persistence | Pending |
+| Modifier input, latch and MRU integration | Native source drafted and compiler-checked; runtime qualification pending |
+| Native stack view and persistence | Native source and session hooks drafted; runtime qualification pending |
 | Floating composer | Native source drafted and compiler-checked; runtime qualification pending |
 | Native Glance and promotion | Pending |
-| Per-tab debugger status and stop | Pending |
-| Shortcut editing and back-to-opener behavior | Pending |
+| Per-tab debugger status and stop | Native status/stop source compiler-checked; attachment policy patch drafted; runtime qualification pending |
+| Shortcut editing and back-to-opener behavior | Editable bindings and capture suppression drafted; upstream back-to-opener found; runtime qualification pending |
 | Upstream update rehearsal | Pending |
 
 ### Resource incident and enforced limits
@@ -92,6 +92,25 @@ additions and removals, latch release separation, editor ownership and canceled
 reveal timers. These results do not qualify native AppKit event delivery.
 
 ## Qualification contract
+
+### Current integration evidence
+
+The generated downstream patch touches 25 upstream files. Applying and reversing
+it on isolated snapshots passes. Three patch-runner regression scenarios verify
+idempotence, replacing a patch that drops old changes, and preserving local edits.
+This is patch validation, not the upstream-update rehearsal.
+
+Five native translation units pass serial syntax checks with the pinned Chromium
+compiler and generated baseline headers. The full app, generated Mojo/TypeScript
+changes, branding and Sparkle changes have not completed their integrated build.
+The staging UI remains behind `--plico-native-navigation`; the baseline source
+has not yet received the Plico patch. Existing browser profiles are untouched.
+
+Independent review found and fixed stack-click commit bookkeeping, stale closed
+tab selection in the composer, and URL editing losing its original tab identity.
+The closed-target state now has no implicit replacement selection. The stack-click
+fix and remapped gesture modifier ownership have host regression coverage.
+Native composer behavior still requires execution in the actual browser.
 
 Hold, latch and MRU modes share a candidate and one commit operation. A candidate
 is never an actual page activation. Only the browser's activation acknowledgement

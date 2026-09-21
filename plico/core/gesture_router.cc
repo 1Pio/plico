@@ -11,6 +11,7 @@ void GestureRouter::Cancel() {
   command_bare_ = false;
   latch_tap_ = false;
   selection_action_ = false;
+  gesture_owner_ = 0;
   model_.Cancel();
 }
 
@@ -32,26 +33,32 @@ GestureResult GestureRouter::PointerSelect(TabId tab) {
   return result;
 }
 
+GestureResult GestureRouter::PointerSelectStack(int slot) {
+  if (!model_.SelectStack(slot) || !model_.candidate()) return {};
+  return PointerSelect(*model_.candidate());
+}
+
 GestureResult GestureRouter::ModifiersChanged(unsigned modifiers,
                                                std::int64_t now) {
   GestureResult result;
   const unsigned previous = modifiers_;
   modifiers_ = modifiers;
+  if (gesture_owner_ && (previous & gesture_owner_) && !(modifiers & gesture_owner_) &&
+      (model_.mode() == Mode::kCommandHold || model_.mode() == Mode::kRecentHold)) {
+    if (selection_action_ || model_.mode() == Mode::kRecentHold)
+      result.commit = model_.CommitSelection();
+    else model_.Cancel();
+    gesture_owner_ = 0;
+    selection_action_ = false;
+  }
   if ((previous & kCommand) && !(modifiers & kCommand)) {
     deadline_.reset();
-    if (model_.mode() == Mode::kCommandHold) {
-      if (selection_action_) result.commit = model_.CommitSelection();
-      else model_.Cancel();  // Merely inspecting the bar preserves page focus.
-    } else if (model_.mode() == Mode::kLatched && latch_tap_ && command_bare_) {
+    if (model_.mode() == Mode::kLatched && latch_tap_ && command_bare_) {
       result.commit = model_.CommitSelection();
     }
     command_bare_ = false;
     latch_tap_ = false;
-    selection_action_ = false;
-  }
-  if ((previous & kControl) && !(modifiers & kControl) &&
-      model_.mode() == Mode::kRecentHold) {
-    result.commit = model_.CommitSelection();
+    if (model_.mode() == Mode::kHidden) selection_action_ = false;
   }
   if (!(previous & kCommand) && (modifiers & kCommand)) {
     command_bare_ = modifiers == kCommand && !editor_;
@@ -70,7 +77,10 @@ void GestureRouter::RevealIfDue(std::int64_t now) {
   if (!deadline_ || now < *deadline_) return;
   deadline_.reset();
   if (!editor_ && command_bare_ && modifiers_ == kCommand &&
-      model_.mode() == Mode::kHidden) model_.Begin(Mode::kCommandHold);
+      model_.mode() == Mode::kHidden) {
+    model_.Begin(Mode::kCommandHold);
+    gesture_owner_ = kCommand;
+  }
 }
 
 GestureResult GestureRouter::KeyDown(Action action, unsigned modifiers,
@@ -104,6 +114,7 @@ GestureResult GestureRouter::KeyDown(Action action, unsigned modifiers,
   }
   if (action == Action::kToggle) {
     result.consumed = true;
+    gesture_owner_ = 0;
     if (!repeat) {
       if (model_.mode() == Mode::kLatched)
         result.commit = model_.CommitSelection();
@@ -113,8 +124,13 @@ GestureResult GestureRouter::KeyDown(Action action, unsigned modifiers,
   }
   if (action == Action::kRecent) {
     result.consumed = true;
-    if (model_.mode() != Mode::kRecentHold) model_.Begin(Mode::kRecentHold);
+    if (model_.mode() != Mode::kRecentHold) {
+      model_.Begin(Mode::kRecentHold);
+      gesture_owner_ = modifiers & kControl ? kControl : modifiers & kCommand ? kCommand
+          : modifiers & kOption ? kOption : 0;
+    }
     model_.StepRecent(modifiers & kShift ? -1 : 1);
+    if (!gesture_owner_) result.commit = model_.CommitSelection();
     return result;
   }
   if (action == Action::kAccept) {
@@ -122,8 +138,11 @@ GestureResult GestureRouter::KeyDown(Action action, unsigned modifiers,
     if (result.consumed && !repeat) result.commit = model_.CommitSelection();
     return result;
   }
-  if (model_.mode() != Mode::kLatched && model_.mode() != Mode::kCommandHold)
+  if (model_.mode() != Mode::kLatched && model_.mode() != Mode::kCommandHold) {
     model_.Begin(Mode::kCommandHold);
+    gesture_owner_ = modifiers & kCommand ? kCommand : modifiers & kControl ? kControl
+        : modifiers & kOption ? kOption : 0;
+  }
   result.consumed = true;
   selection_action_ = true;
   const bool move = modifiers & kShift;
@@ -148,6 +167,8 @@ GestureResult GestureRouter::KeyDown(Action action, unsigned modifiers,
       break;
     default: break;
   }
+  if (!gesture_owner_ && model_.mode() == Mode::kCommandHold)
+    result.commit = model_.CommitSelection();
   return result;
 }
 

@@ -119,11 +119,63 @@ void ComposerFocusAndCancellation() {
   CHECK(!f.router.ModifiersChanged(0, 901).commit);
 }
 
+void RemappedModifierOwnership() {
+  Fixture f;
+  f.router.ModifiersChanged(kControl, 0);
+  CHECK(!f.router.KeyDown(Action::kLeft, kControl).commit);
+  CHECK(f.model.candidate() == 2 && f.model.active() == 3);
+  f.router.ModifiersChanged(kControl | kCommand, 0);
+  CHECK(!f.router.ModifiersChanged(kControl, 0).commit);
+  auto result = f.router.ModifiersChanged(0, 1);
+  CHECK(result.commit && result.commit->activate == 2);
+  CHECK(!f.router.ModifiersChanged(0, 2).commit);
+
+  f.router.ModifiersChanged(kCommand, 3);
+  f.router.KeyDown(Action::kRecent, kCommand);
+  CHECK(f.model.candidate() == 1 && f.model.active() == 3);
+  result = f.router.ModifiersChanged(0, 4);
+  CHECK(result.commit && result.commit->activate == 1);
+}
+
+void RemappedUnmodifiedKeysCommitOnce() {
+  Fixture f;
+  auto result = f.router.KeyDown(Action::kLeft, 0);
+  CHECK(result.commit && result.commit->activate == 2);
+  CHECK(f.model.mode() == Mode::kHidden && f.model.active() == 3);
+  CHECK(!f.router.ModifiersChanged(0, 1).commit);
+  result = f.router.KeyDown(Action::kRecent, 0);
+  CHECK(result.commit && result.commit->activate == 1);
+  CHECK(f.model.mode() == Mode::kHidden);
+}
+
+void PointerStackCommitsOnce() {
+  Fixture f;
+  Layout layout;
+  layout.loose = {1};
+  layout.stacks[0] = {2, 3};
+  layout.last_active[0] = 3;
+  CHECK(f.model.Reset(layout, 1, {1, 3, 2}));
+  f.router.ModifiersChanged(kCommand, 0);
+  f.router.RevealIfDue(150);
+  CHECK(!f.router.PointerSelectStack(0).commit);
+  CHECK(f.model.candidate() == 3 && f.model.active() == 1);
+  auto result = f.router.ModifiersChanged(0, 151);
+  CHECK(result.commit && result.commit->activate == 3);
+  CHECK(!f.router.ModifiersChanged(0, 152).commit);
+  f.router.KeyDown(Action::kToggle, 0);
+  result = f.router.PointerSelectStack(0);
+  CHECK(result.commit && result.commit->activate == 3);
+  CHECK(f.model.mode() == Mode::kHidden);
+}
+
 int main() {
   DelayAndOrdinaryCopy();
   ImmediateAndCancel();
   LatchAndBareTap();
   ModeOwnershipAndMoveRollback();
   ComposerFocusAndCancellation();
-  std::puts("5 modifier-routing scenarios passed");
+  RemappedModifierOwnership();
+  RemappedUnmodifiedKeysCommitOnce();
+  PointerStackCommitsOnce();
+  std::puts("8 modifier-routing scenarios passed");
 }

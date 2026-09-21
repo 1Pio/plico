@@ -1,1 +1,4 @@
 *.patch linguist-language=C++
+
+# Unified diff context includes a leading space even on blank or tabbed lines.
+plico/patches/*.patch whitespace=-blank-at-eol,-space-before-tab

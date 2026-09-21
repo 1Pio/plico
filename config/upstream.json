@@ -1,0 +1,7 @@
+{
+  "repository": "imputnet/helium-macos",
+  "tag": "0.17.2.1",
+  "platform_commit": "10373c4c5e6b0323b56aa676be8a96f9e12342c1",
+  "core_commit": "8c19f4c6d624e31293bca13e655f2fe542ba6fdb",
+  "chromium_version": "153.0.8010.52"
+}

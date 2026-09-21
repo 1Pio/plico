@@ -1,0 +1,31 @@
+{
+  "baseline": "10373c4c5e6b0323b56aa676be8a96f9e12342c1",
+  "touched_upstream_files": [
+    "chrome/app/app-Info.plist",
+    "chrome/app/chromium_strings.grd",
+    "chrome/app/theme/chromium/BRANDING",
+    "chrome/browser/BUILD.gn",
+    "chrome/browser/chrome_browser_application_mac.mm",
+    "chrome/browser/devtools/BUILD.gn",
+    "chrome/browser/devtools/chrome_devtools_manager_delegate.cc",
+    "chrome/browser/mac/sparkle_glue.mm",
+    "chrome/browser/resources/settings/system_page/browser_shortcuts_page.ts",
+    "chrome/browser/sessions/BUILD.gn",
+    "chrome/browser/sessions/session_service.cc",
+    "chrome/browser/ui/BUILD.gn",
+    "chrome/browser/ui/browser_live_tab_context.cc",
+    "chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc",
+    "chrome/browser/ui/browser_shortcuts/browser_shortcut_platform_mac.mm",
+    "chrome/browser/ui/browser_shortcuts/browser_shortcut_service.cc",
+    "chrome/browser/ui/browser_shortcuts/browser_shortcut_service.h",
+    "chrome/browser/ui/browser_tabrestore.cc",
+    "chrome/browser/ui/views/frame/browser_view.cc",
+    "chrome/browser/ui/views/frame/browser_view.h",
+    "chrome/browser/ui/webui/settings/browser_shortcuts.mojom",
+    "chrome/browser/ui/webui/settings/browser_shortcuts_handler.cc",
+    "chrome/browser/ui/webui/settings/browser_shortcuts_handler.h",
+    "chrome/common/chrome_paths_mac.mm",
+    "components/os_crypt/common/keychain_password_mac.mm"
+  ],
+  "purpose": "Native navigation, composer, session metadata and per-tab debugger controls"
+}

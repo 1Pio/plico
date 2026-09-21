@@ -1,0 +1,609 @@
+--- a/chrome/browser/chrome_browser_application_mac.mm
++++ b/chrome/browser/chrome_browser_application_mac.mm
+@@ -3,6 +3,8 @@
+ // found in the LICENSE file.
+ 
+ #import "chrome/browser/chrome_browser_application_mac.h"
++
++#include "plico/native/event_dispatch_mac.h"
+ 
+ #include <Carbon/Carbon.h>  // for <HIToolbox/Events.h>
+ 
+@@ -354,6 +356,8 @@
+     content::ScopedNotifyNativeEventProcessorObserver scopedObserverNotifier(
+         &self->_observers, event);
+ 
++    if (plico::DispatchEvent(event)) return;
++
+     BOOL sendEventToKeyWindow = NO;
+     if (event.type == NSEventTypeKeyDown &&
+         (event.keyCode == kVK_JIS_Eisu || event.keyCode == kVK_JIS_Kana)) {
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1536,6 +1536,7 @@
+     deps += [
+       ":app_controller_mac",
+       ":chrome_browser_application_mac",
++      "//plico:event_dispatch",
+       ":chrome_browser_main_mac",
+       ":fullscreen",
+       ":global_keyboard_shortcuts_mac",
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -526,6 +526,18 @@
+     "tab_helpers.h",
+   ]
+ 
++  if (is_mac) {
++    sources += [
++      "//plico/native/browser_controller.h",
++      "//plico/native/browser_controller_mac.mm",
++      "//plico/native/composer_view.cc",
++      "//plico/native/composer_view.h",
++      "//plico/native/navigator_view.cc",
++      "//plico/native/navigator_view.h",
++      "//plico/native/shortcuts.h",
++    ]
++  }
++
+   defines = []
+   libs = []
+ 
+@@ -535,6 +547,8 @@
+   ]
+ 
+   public_deps = [
++    "//plico:core",
++    "//plico:tab_metadata",
+     # WARNING WARNING WARNING
+     # New dependencies outside of //chrome/browser should be added to
+     # ui_public_dependencies.
+@@ -2402,6 +2416,7 @@
+     deps += [
+       "//chrome/browser:app_controller_mac",
+       "//chrome/browser:chrome_browser_application_mac",
++      "//plico:event_dispatch",
+       "//chrome/browser:global_keyboard_shortcuts_mac",
+       "//chrome/browser/mac",
+       "//chrome/browser/renderer_host:delegate",
+--- a/chrome/browser/ui/views/frame/browser_view.h
++++ b/chrome/browser/ui/views/frame/browser_view.h
+@@ -75,6 +75,8 @@
+ 
+ // NOTE: For more information about the objects and files in this directory,
+ // view: http://dev.ch40m1um.qjz9zk/developers/design-documents/browser-window
++
++namespace plico { class BrowserController; }
+ 
+ class AccessibilityFocusHighlight;
+ class AppMenuControl;
+@@ -1475,6 +1477,9 @@
+   std::optional<gfx::Point> zen_last_cursor_;
+   bool zen_mode_enabled_ = false;
+ 
++#if BUILDFLAG(IS_MAC)
++  std::unique_ptr<plico::BrowserController> plico_controller_;
++#endif
+   mutable base::WeakPtrFactory<BrowserView> weak_ptr_factory_{this};
+ };
+ 
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -3,6 +3,10 @@
+ // found in the LICENSE file.
+ 
+ #include "chrome/browser/ui/views/frame/browser_view.h"
++
++#if BUILDFLAG(IS_MAC)
++#include "plico/native/browser_controller.h"
++#endif
+ 
+ #include <stdint.h>
+ 
+@@ -1191,6 +1195,9 @@
+ }
+ 
+ BrowserView::~BrowserView() {
++#if BUILDFLAG(IS_MAC)
++  plico_controller_.reset();
++#endif
+   if (browser_shortcut_service_) {
+     browser_shortcut_service_->RemoveObserver(this);
+     browser_shortcut_service_ = nullptr;
+@@ -4776,6 +4783,9 @@
+ #endif  // IS_MAC
+ 
+ void BrowserView::OnWidgetDestroying(views::Widget* widget) {
++#if BUILDFLAG(IS_MAC)
++  plico_controller_.reset();
++#endif
+   DCHECK(widget_observation_.IsObservingSource(widget));
+   widget_observation_.Reset();
+   // Destroy any remaining WebContents early on. Doing so may result in
+@@ -4805,6 +4815,9 @@
+     }
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  if (!active && plico_controller_) plico_controller_->Cancel();
++#endif
+   // Collapse zen mode chrome when the window is deactivated.
+   if (!active && zen_mode_enabled_) {
+     UpdateZenModeReveal(/*reveal_top=*/false, /*reveal_side=*/false);
+@@ -4822,6 +4835,9 @@
+ void BrowserView::OnWidgetBoundsChanged(views::Widget* widget,
+                                         const gfx::Rect& new_bounds) {
+   TryNotifyWindowBoundsChanged(new_bounds);
++#if BUILDFLAG(IS_MAC)
++  if (plico_controller_) plico_controller_->Refresh();
++#endif
+ }
+ 
+ void BrowserView::OnWindowBeginUserBoundsChange() {
+@@ -5839,6 +5855,12 @@
+       kBrowserDialogAnchorElementId, *this);
+ 
+   initialized_ = true;
++#if BUILDFLAG(IS_MAC)
++  if (GetIsNormalType() && base::CommandLine::ForCurrentProcess()->HasSwitch(
++          "plico-native-navigation")) {
++    plico_controller_ = std::make_unique<plico::BrowserController>(this);
++  }
++#endif
+ }
+ 
+ void BrowserView::RemovedFromWidget() {
+--- a/chrome/browser/ui/browser_live_tab_context.cc
++++ b/chrome/browser/ui/browser_live_tab_context.cc
+@@ -3,6 +3,7 @@
+ // found in the LICENSE file.
+ 
+ #include "chrome/browser/ui/browser_live_tab_context.h"
++#include "plico/native/tab_metadata.h"
+ 
+ #include <memory>
+ #include <numeric>
+@@ -170,6 +171,7 @@
+   glic::PopulateGlicExtraData(tab_strip_model_->GetTabAtIndex(index),
+                               &extra_data);
+ 
++  plico::TabMetadata::Populate(tab_strip_model_->GetWebContentsAt(index), &extra_data);
+   return extra_data;
+ }
+ 
+--- a/chrome/browser/ui/browser_tabrestore.cc
++++ b/chrome/browser/ui/browser_tabrestore.cc
+@@ -3,6 +3,7 @@
+ // found in the LICENSE file.
+ 
+ #include "chrome/browser/ui/browser_tabrestore.h"
++#include "plico/native/tab_metadata.h"
+ 
+ #include <map>
+ #include <memory>
+@@ -87,6 +88,7 @@
+   apps::SetAppIdForWebContents(browser->GetProfile(), web_contents.get(),
+                                extension_app_id);
+ 
++  plico::TabMetadata::Restore(web_contents.get(), extra_data);
+   glic::RestoreGlicStateFromExtraData(web_contents.get(), extra_data);
+   send_tab_to_self::SendTabToSelfActivationTracker::RestoreFromExtraData(
+       web_contents.get(), extra_data);
+--- a/chrome/browser/sessions/session_service.cc
++++ b/chrome/browser/sessions/session_service.cc
+@@ -3,6 +3,7 @@
+ // found in the LICENSE file.
+ 
+ #include "chrome/browser/sessions/session_service.h"
++#include "plico/native/tab_metadata.h"
+ 
+ #include <stddef.h>
+ 
+@@ -640,6 +641,11 @@
+   sessions::SessionTabHelper* session_tab_helper =
+       sessions::SessionTabHelper::FromWebContents(tab);
+   SessionID session_id(session_tab_helper->session_id());
++  if (auto* metadata = plico::TabMetadata::FromWebContents(tab)) {
++    command_storage_manager()->AppendRebuildCommand(
++        sessions::CreateAddTabExtraDataCommand(session_id,
++            plico::kTabMetadataKey, metadata->Serialize()));
++  }
+ 
+   const blink::UserAgentOverride& ua_override = tab->GetUserAgentOverride();
+ 
+--- a/chrome/browser/sessions/BUILD.gn
++++ b/chrome/browser/sessions/BUILD.gn
+@@ -78,6 +78,7 @@
+ 
+   deps = [
+     "//chrome/browser/glic",
++    "//plico:tab_metadata",
+     "//chrome/browser/lifetime",
+   ]
+ 
+--- a/chrome/browser/devtools/chrome_devtools_manager_delegate.cc
++++ b/chrome/browser/devtools/chrome_devtools_manager_delegate.cc
+@@ -3,6 +3,7 @@
+ // found in the LICENSE file.
+ 
+ #include "chrome/browser/devtools/chrome_devtools_manager_delegate.h"
++#include "plico/native/tab_metadata.h"
+ 
+ #include <memory>
+ #include <utility>
+@@ -400,6 +401,10 @@
+ 
+ bool ChromeDevToolsManagerDelegate::AllowInspectingRenderFrameHost(
+     content::RenderFrameHost* rfh) {
++  if (auto* contents = content::WebContents::FromRenderFrameHost(rfh)) {
++    if (auto* state = plico::TabMetadata::FromWebContents(contents);
++        state && state->inspection_blocked) return false;
++  }
+   Profile* profile =
+       Profile::FromBrowserContext(rfh->GetProcess()->GetBrowserContext());
+   return IsInspectionAllowed(profile,
+@@ -408,6 +413,10 @@
+ 
+ bool ChromeDevToolsManagerDelegate::AllowInspectingTarget(
+     content::DevToolsAgentHost* agent_host) {
++  if (auto* contents = agent_host->GetWebContents()) {
++    if (auto* state = plico::TabMetadata::FromWebContents(contents);
++        state && state->inspection_blocked) return false;
++  }
+   // For Android, we have the same implementation
+   // in DevToolsManagerDelegateAndroid.
+   Profile* profile =
+--- a/chrome/browser/devtools/BUILD.gn
++++ b/chrome/browser/devtools/BUILD.gn
+@@ -120,6 +120,7 @@
+ 
+   deps = [
+     "//base",
++    "//plico:tab_metadata",
+     "//chrome/browser:file_select_helper",
+     "//chrome/browser/infobars",
+     "//chrome/browser/lifetime",
+--- a/chrome/browser/ui/browser_shortcuts/browser_shortcut_service.h
++++ b/chrome/browser/ui/browser_shortcuts/browser_shortcut_service.h
+@@ -7,6 +7,7 @@
+ 
+ #include <map>
+ #include <optional>
++#include <set>
+ #include <string>
+ #include <string_view>
+ #include <vector>
+@@ -60,6 +61,8 @@
+   const std::vector<CommandInfo>& GetCommands() const;
+   std::vector<std::pair<ui::Accelerator, int>> GetAcceleratorMap() const;
+   bool HasCommand(int command_id) const;
++  void SetCaptureActive(const void* owner, bool active);
++  bool IsCaptureActive() const { return !capture_owners_.empty(); }
+   bool HasDefaultAccelerator(int command_id,
+                              const ui::Accelerator& accelerator) const;
+ 
+@@ -121,6 +124,7 @@
+ 
+   raw_ptr<PrefService> prefs_;
+   PrefChangeRegistrar pref_change_registrar_;
++  std::set<const void*> capture_owners_;
+   CommandAccelerators defaults_;
+   CommandAccelerators current_;
+   std::vector<CommandInfo> command_cache_;
+--- a/chrome/browser/ui/browser_shortcuts/browser_shortcut_service.cc
++++ b/chrome/browser/ui/browser_shortcuts/browser_shortcut_service.cc
+@@ -3,6 +3,7 @@
+ // the terms of the GPL-3.0 license that can be found in the LICENSE file.
+ 
+ #include "chrome/browser/ui/browser_shortcuts/browser_shortcut_service.h"
++#include "plico/native/shortcuts.h"
+ 
+ #include <algorithm>
+ #include <string>
+@@ -92,6 +93,7 @@
+ }
+ 
+ std::u16string GetCommandDisplayName(const BrowserShortcutCommandLabel& label) {
++  if (!label.message_id && label.replacement) return *label.replacement;
+   std::u16string display_name = gfx::RemoveAccelerator(
+       label.replacement.has_value()
+           ? l10n_util::GetStringFUTF16(label.message_id, *label.replacement)
+@@ -131,12 +133,20 @@
+ std::vector<std::pair<ui::Accelerator, int>>
+ BrowserShortcutService::GetAcceleratorMap() const {
+   std::vector<std::pair<ui::Accelerator, int>> map;
++  if (IsCaptureActive()) return map;
+   for (const auto& [command_id, entries] : current_) {
+     for (const AcceleratorEntry& entry : entries) {
+       map.emplace_back(entry.accelerator, command_id);
+     }
+   }
+   return map;
++}
++
++void BrowserShortcutService::SetCaptureActive(const void* owner, bool active) {
++  const bool previous = IsCaptureActive();
++  if (active) capture_owners_.insert(owner);
++  else capture_owners_.erase(owner);
++  if (previous != IsCaptureActive()) NotifyChanged();
+ }
+ 
+ bool BrowserShortcutService::HasCommand(int command_id) const {
+@@ -278,6 +288,7 @@
+     int command_id_to_ignore) const {
+ #if BUILDFLAG(IS_MAC)
+   for (const auto& platform_default : GetPlatformDefaultAccelerators()) {
++    if (plico::shortcuts::Enabled() && platform_default.command_id == IDC_HIDE_APP) continue;
+     if (platform_default.command_id != command_id_to_ignore &&
+         !platform_default.user_modifiable &&
+         platform_default.accelerator == accelerator) {
+@@ -455,6 +466,7 @@
+     if (!has_label && !reserve_unlabeled) {
+       return;
+     }
++    if (has_label) defaults.try_emplace(command_id);
+     if (!seen_accelerators.insert(ui_accelerator).second) {
+       return;
+     }
+@@ -468,6 +480,11 @@
+   };
+ 
+ #if BUILDFLAG(IS_MAC)
++  if (plico::shortcuts::Enabled()) {
++    for (const auto& [accelerator, command] : plico::shortcuts::Defaults())
++      insert_default(command, accelerator, true, false);
++    defaults.try_emplace(IDC_HIDE_APP);
++  }
+   for (const BrowserShortcutPlatformDefaultAccelerator& accelerator :
+        GetPlatformDefaultAccelerators()) {
+     // Reserve unlabeled platform shortcuts too, so visible commands cannot
+--- a/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
++++ b/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
+@@ -3,6 +3,7 @@
+ // the terms of the GPL-3.0 license that can be found in the LICENSE file.
+ 
+ #include "chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.h"
++#include "plico/native/shortcuts.h"
+ 
+ #include <optional>
+ #include <string>
+@@ -75,6 +76,7 @@
+ std::optional<BrowserShortcutCommandLabel> GetBrowserShortcutCommandLabel(
+     int command_id,
+     const PrefService* prefs) {
++  if (auto label = plico::shortcuts::Label(command_id)) return BrowserShortcutCommandLabel{0, *label};
+   if (ShouldHideBrowserShortcutCommand(command_id)) {
+     return std::nullopt;
+   }
+--- a/chrome/browser/ui/browser_shortcuts/browser_shortcut_platform_mac.mm
++++ b/chrome/browser/ui/browser_shortcuts/browser_shortcut_platform_mac.mm
+@@ -3,6 +3,7 @@
+ // the terms of the GPL-3.0 license that can be found in the LICENSE file.
+ 
+ #include "chrome/browser/ui/browser_shortcuts/browser_shortcut_platform_mac.h"
++#include "plico/native/shortcuts.h"
+ 
+ #import <AppKit/AppKit.h>
+ 
+@@ -107,6 +108,7 @@
+ bool IsMenuCommandHeliumModifiable(
+     int command_id,
+     const std::optional<ui::Accelerator>& accelerator) {
++  if (plico::shortcuts::Enabled() && command_id == IDC_HIDE_APP) return true;
+   if (IsDynamicCloseCommand(command_id)) {
+     return false;
+   }
+--- a/chrome/browser/ui/webui/settings/browser_shortcuts.mojom
++++ b/chrome/browser/ui/webui/settings/browser_shortcuts.mojom
+@@ -40,6 +40,7 @@
+ };
+ 
+ interface BrowserShortcutsHandler {
++  SetCaptureActive(bool active);
+   GetCommands() => (array<BrowserShortcutCommand> commands);
+   AssignAcceleratorToCommand(int32 command_id, string serialized_accelerator) =>
+       (BrowserShortcutAssignmentResponse response);
+--- a/chrome/browser/ui/webui/settings/browser_shortcuts_handler.h
++++ b/chrome/browser/ui/webui/settings/browser_shortcuts_handler.h
+@@ -25,6 +25,7 @@
+   ~BrowserShortcutsHandler() override;
+ 
+   // mojom::BrowserShortcutsHandler:
++  void SetCaptureActive(bool active) override;
+   void GetCommands(GetCommandsCallback callback) override;
+   void AssignAcceleratorToCommand(
+       int32_t command_id,
+--- a/chrome/browser/ui/webui/settings/browser_shortcuts_handler.cc
++++ b/chrome/browser/ui/webui/settings/browser_shortcuts_handler.cc
+@@ -8,6 +8,7 @@
+ #include <optional>
+ #include <string>
+ #include <utility>
++#include "base/functional/bind.h"
+ 
+ #include "base/strings/utf_string_conversions.h"
+ #include "build/build_config.h"
+@@ -49,10 +50,17 @@
+       receiver_(this, std::move(receiver)),
+       service_(service) {
+   service_->AddObserver(this);
++  receiver_.set_disconnect_handler(base::BindOnce(
++      &BrowserShortcutsHandler::SetCaptureActive, base::Unretained(this), false));
+ }
+ 
+ BrowserShortcutsHandler::~BrowserShortcutsHandler() {
+   service_->RemoveObserver(this);
++  service_->SetCaptureActive(this, false);
++}
++
++void BrowserShortcutsHandler::SetCaptureActive(bool active) {
++  service_->SetCaptureActive(this, active);
+ }
+ 
+ void BrowserShortcutsHandler::GetCommands(GetCommandsCallback callback) {
+--- a/chrome/browser/resources/settings/system_page/browser_shortcuts_page.ts
++++ b/chrome/browser/resources/settings/system_page/browser_shortcuts_page.ts
+@@ -129,6 +129,11 @@
+     });
+   }
+ 
++  override disconnectedCallback() {
++    this.handler_.setCaptureActive(false);
++    super.disconnectedCallback();
++  }
++
+   private upsertCommand_(command: Command) {
+     const index = this.commands_.findIndex(
+         existing => existing.commandId === command.commandId);
+@@ -210,6 +215,7 @@
+     this.captureMessage_ = '';
+     this.canSaveCaptured_ = false;
+     this.keyDisplayRequestId_++;
++    this.handler_.setCaptureActive(true);
+     this.showCaptureDialog_ = true;
+     queueMicrotask(() => {
+       this.shadowRoot!.querySelector<HTMLElement>('#captureTarget')?.focus();
+@@ -320,6 +326,7 @@
+   }
+ 
+   private closeDialogs_() {
++    this.handler_.setCaptureActive(false);
+     this.showCaptureDialog_ = false;
+     this.showResetDialog_ = false;
+     this.dialogState_ = null;
+--- a/chrome/app/theme/chromium/BRANDING
++++ b/chrome/app/theme/chromium/BRANDING
+@@ -1,10 +1,10 @@
+-COMPANY_FULLNAME=The Helium Authors
+-COMPANY_SHORTNAME=The Helium Authors
+-PRODUCT_FULLNAME=Helium
+-PRODUCT_SHORTNAME=Helium
+-PRODUCT_INSTALLER_FULLNAME=Helium Installer
+-PRODUCT_INSTALLER_SHORTNAME=Helium Installer
++COMPANY_FULLNAME=The plico Authors
++COMPANY_SHORTNAME=The plico Authors
++PRODUCT_FULLNAME=plico
++PRODUCT_SHORTNAME=plico
++PRODUCT_INSTALLER_FULLNAME=plico Installer
++PRODUCT_INSTALLER_SHORTNAME=plico Installer
+ COPYRIGHT=Copyright @LASTCHANGE_YEAR@ The Helium Authors. All rights reserved.
+-MAC_BUNDLE_ID=net.imput.helium
+-MAC_CREATOR_CODE=Cr24
+-MAC_TEAM_ID=S4Q33XPHB4
++MAC_BUNDLE_ID=io.github.1Pio.plico
++MAC_CREATOR_CODE=Plco
++MAC_TEAM_ID=
+--- a/chrome/app/chromium_strings.grd
++++ b/chrome/app/chromium_strings.grd
+@@ -282,18 +282,18 @@
+       <if expr="_is_chrome_for_testing_branded">
+         <then>
+           <message name="IDS_PRODUCT_NAME" desc="The Chrome for Testing application name" translateable="false">
+-            Helium for Testing
++            plico for Testing
+           </message>
+           <message name="IDS_SHORT_PRODUCT_NAME" desc="The Chrome for Testing application short name." translateable="false">
+-            Helium for Testing
++            plico for Testing
+           </message>
+         </then>
+         <else>
+           <message name="IDS_PRODUCT_NAME" desc="The Chrome application name" translateable="false">
+-            Helium
++            plico
+           </message>
+           <message name="IDS_SHORT_PRODUCT_NAME" desc="The Chrome application short name." translateable="false">
+-            Helium
++            plico
+           </message>
+         </else>
+       </if>
+@@ -1165,13 +1165,13 @@
+ 
+       <if expr="is_macosx">
+         <message name="IDS_APP_MENU_PRODUCT_NAME" desc="The application's short name, used for the Mac's application menu, activity monitor, etc. This should be less than 16 characters. Example: Chrome, not Google Chrome." translateable="false">
+-          Helium
++          plico
+         </message>
+         <message name="IDS_HELPER_NAME" desc="The helper application's name.  Should contain the Chrome application name (IDS_PRODUCT_NAME). Example: Google Chrome Helper.">
+-          Helium Helper
++          plico Helper
+         </message>
+         <message name="IDS_SHORT_HELPER_NAME" desc="The helper application's short name, used for the Mac's application menu, activity monitor, etc. Example: Chrome Helper, not Google Chrome Helper.">
+-          Helium Helper
++          plico Helper
+         </message>
+       </if>
+ 
+--- a/chrome/common/chrome_paths_mac.mm
++++ b/chrome/common/chrome_paths_mac.mm
+@@ -32,7 +32,7 @@
+     product_dir_name = [product_dir_name_ns fileSystemRepresentation];
+ 
+     if (!product_dir_name) {
+-      product_dir_name = "net.imput.helium";
++      product_dir_name = "io.github.1Pio.plico";
+     }
+ 
+     // Leaked, but the only caller initializes a static with this result, so it
+--- a/chrome/app/app-Info.plist
++++ b/chrome/app/app-Info.plist
+@@ -151,6 +151,8 @@
+ 	<string>app.icns</string>
+ 	<key>CFBundleIconName</key>
+ 	<string>AppIcon</string>
++	<key>CrProductDirName</key>
++	<string>io.github.1Pio.plico</string>
+ 	<key>CFBundleIdentifier</key>
+ 	<string>${CHROMIUM_BUNDLE_ID}</string>
+ 	<key>CFBundleInfoDictionaryVersion</key>
+--- a/components/os_crypt/common/keychain_password_mac.mm
++++ b/components/os_crypt/common/keychain_password_mac.mm
+@@ -34,8 +34,8 @@
+ // These two strings ARE indeed user facing.  But they are used to access
+ // the encryption keyword.  So as to not lose encrypted data when system
+ // locale changes we DO NOT LOCALIZE.
+-const char kDefaultServiceName[] = "Helium Storage Key";
+-const char kDefaultAccountName[] = "Helium";
++const char kDefaultServiceName[] = "plico Storage Key";
++const char kDefaultAccountName[] = "plico";
+ 
+ // These values are persisted to logs. Entries should not be renumbered and
+ // numeric values should never be reused.
+--- a/chrome/browser/mac/sparkle_glue.mm
++++ b/chrome/browser/mac/sparkle_glue.mm
+@@ -254,32 +254,8 @@
+ 
+ VersionUpdaterSparkle::VersionUpdaterSparkle(Profile* profile)
+     : weak_ptr_factory_(this) {
+-
+-  // Ensure the Sparkle observer is only created once because there is only a
+-  // single Sparkle instance. We do not want to reset Sparkle's delegate, etc.
+-  static SparkleObserver* sparkle_observer = nil;
+-  static SparkleDriver* sparkle_driver = nil;
+-  static dispatch_once_t token;
+-  static NSBundle* hostBundle = [NSBundle mainBundle];
+-
+-  dispatch_once(&token, ^{
+-    sparkle_observer = [[SparkleObserver alloc] initWithProfile:profile];
+-    sparkle_driver = [[SparkleDriver alloc] initWithObserver:sparkle_observer];
+-
+-    VersionUpdaterSparkle::sparkle_observer_ = sparkle_observer;
+-    VersionUpdaterSparkle::sparkle_updater_ = [[SPUUpdater alloc]
+-                                              initWithHostBundle:hostBundle
+-                                              applicationBundle:hostBundle
+-                                              userDriver:sparkle_driver
+-                                              delegate:sparkle_observer];
+-
+-  });
+-
+-  sparkle_subscription_ = [VersionUpdaterSparkle::sparkle_observer_
+-      registerStatusCallback:base::BindRepeating(
+-                                 &VersionUpdaterSparkle::UpdateStatus,
+-                                 weak_ptr_factory_.GetWeakPtr())];
+-  helium::InitializeSparkleFramework();
++  // Development builds must never install updates from Helium's feed. A signed
++  // plico release/update authority must be established before enabling updates.
+ }
+ 
+ VersionUpdaterSparkle::~VersionUpdaterSparkle() = default;

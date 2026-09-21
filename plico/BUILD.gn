@@ -1,0 +1,23 @@
+# Copyright 2026 The plico Authors
+# SPDX-License-Identifier: GPL-3.0-only
+
+source_set("core") {
+  sources = [
+    "core/gesture_router.cc",
+    "core/gesture_router.h",
+    "core/navigator_model.cc",
+    "core/navigator_model.h",
+  ]
+}
+
+source_set("tab_metadata") {
+  sources = [ "native/tab_metadata.cc", "native/tab_metadata.h" ]
+  deps = [ "//base", "//content/public/browser" ]
+}
+
+if (is_mac) {
+  source_set("event_dispatch") {
+    sources = [ "native/event_dispatch_mac.h", "native/event_dispatch_mac.mm" ]
+    deps = [ "//base" ]
+  }
+}
