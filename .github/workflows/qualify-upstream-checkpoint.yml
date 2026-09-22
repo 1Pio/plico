@@ -43,6 +43,9 @@ jobs:
           test "$(xcrun --sdk macosx --show-sdk-build-version)" = 25A352
           df -h "$RUNNER_TEMP"
           mkdir -p build/logs
+      - name: Check heap reader before restoring the large checkpoint
+        if: inputs.profile_memory
+        run: python3 scripts/test-heap-profile.py
       - name: Verify exact upstream checkpoint
         env:
           GH_TOKEN: ${{ github.token }}
@@ -180,24 +183,8 @@ jobs:
           PYTHON
       - name: Summarize retained heap samples without uploading profiles
         if: always() && inputs.profile_memory
-        env:
-          GOTOOLCHAIN: local
         run: |
-          python3 - <<'PYTHON'
-          import os, shutil, subprocess
-          from pathlib import Path
-          profiles = sorted(Path('build/reuse-qualification').glob('siso-memory.*.pprof'))
-          go = shutil.which('go')
-          print('heap_samples', len(profiles), 'go_available', bool(go))
-          if not go:
-              raise SystemExit('Runner Go tool is unavailable; no heap analysis claimed')
-          for path in profiles[-2:]:
-              print('heap_sample', path.name, path.stat().st_size, flush=True)
-              subprocess.run([
-                  'python3', 'scripts/memory-guard.py',
-                  '--log', 'build/logs/cloud-heap-analysis-memory.jsonl',
-                  '--max-build-mib', '3072', '--max-runtime-seconds', '60', '--',
-                  go, 'tool', 'pprof', '-top', '-sample_index=inuse_space',
-                  '-nodecount=12', '-unit=MB', str(path)
-              ], check=True, env={**os.environ, 'GOTOOLCHAIN': 'local'})
-          PYTHON
+          python3 scripts/memory-guard.py \
+            --log build/logs/cloud-heap-analysis-memory.jsonl \
+            --max-build-mib 3072 --max-runtime-seconds 60 -- \
+            python3 scripts/summarize-heap-profile.py build/reuse-qualification

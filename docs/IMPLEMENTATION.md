@@ -527,3 +527,18 @@ profiles without forcing garbage collection and print the last two bounded
 allocation summaries under the same guard. It uploads no profile artifacts and
 changes no memory limits. Diagnose the allocations before another build strategy.
 Source: [pinned dependency-log reader](https://chromium.googlesource.com/build/+/bc45e8f67ae0f37d337190ad64aa8bb440c791eb/siso/toolsupport/ninjautil/deps_log.go).
+
+The first heap diagnostic [35673325689](https://github.com/1Pio/plico/actions/runs/35673325689)
+captured 17 rolling samples before the same guard stopped Siso, but its summary
+step failed because Go was not available on the runner PATH. No heap allocation
+conclusion follows from that run. The summary now uses a bounded Python reader
+of the published pprof format, retaining only function totals in logs. Tests
+cover packed/unpacked values, selecting the correct byte metric, inline and
+recursive stacks, invalid references, truncated gzip data and the size limit.
+A profile produced by the pinned Siso version command also parses successfully.
+The reader distinguishes sampled Go heap attribution from physical footprint;
+an interrupted final snapshot is reported and earlier complete snapshots remain
+readable. Cloud collection still needs to verify the corrected summary step.
+Independent review caught uncaught invalid-DEFLATE and wrong-wire-type errors;
+the reader now rejects them predictably and the rolling-file fallback regression
+passes. The follow-up review found no remaining issue in that scope.
