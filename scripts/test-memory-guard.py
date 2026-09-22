@@ -45,7 +45,7 @@ def wait_until(predicate, timeout=8):
 
 
 class MemoryGuardTest(unittest.TestCase):
-    def run_guard(self, payload, *, interrupt=None, threshold=None, flags=(), overrides=""):
+    def run_guard(self, payload, *, interrupt=None, threshold=None, flags=(), overrides="", expected_state=None):
         with scratch_directory(prefix="plico-guard-test-") as temp:
             root = Path(temp)
             payload = f"""
@@ -58,7 +58,8 @@ def save_pid(root, name, pid):
     assert identity is not None
     (root / name).write_text(f'{{pid}}:{{identity}}')
 """ + payload
-            command = prefix(overrides) + ["--log", str(root / "memory.jsonl"), *flags]
+            command = prefix(overrides) + ["--log", str(root / "memory.jsonl"),
+                                           "--status", str(root / "status.json"), *flags]
             if threshold:
                 command += ["--max-build-mib", str(threshold)]
             command += ["--", sys.executable, "-c", payload, str(root)]
@@ -79,6 +80,8 @@ def save_pid(root, name, pid):
                     stop = next(record for record in records if "stop_reason" in record)
                     self.assertTrue(stop["owned_processes"])
                     self.assertIn("executable", stop["owned_processes"][0])
+                if expected_state is not None:
+                    self.assertEqual(json.loads((root / "status.json").read_text())["state"], expected_state)
                 return proc.returncode, stderr
             finally:
                 # Cleanup is independent of the tested guard if a regression fails.
@@ -160,6 +163,141 @@ time.sleep(1.5)
             if child.poll() is None:
                 child.kill()
                 child.wait()
+
+    def test_retired_identities_are_not_queried_again(self):
+        child = SimpleNamespace(pid=123, returncode=0)
+        owned = guard.OwnedProcesses(child)
+        owned.identities = {123: 1, 100: 2, 101: 3}
+        with patch.object(guard, 'process_identity', side_effect=lambda pid: {123: None, 100: 20, 101: 3}[pid]) as identity:
+            self.assertEqual(owned.known_live(), {101})
+            self.assertEqual(owned.identities, {101: 3})
+            identity.reset_mock()
+            self.assertEqual(owned.known_live(), {101})
+            identity.assert_called_once_with(101)
+
+    def test_unreadable_identity_cannot_abort_other_worker_cleanup(self):
+        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(10)'],
+                                 start_new_session=True, stderr=subprocess.DEVNULL)
+        owned = guard.OwnedProcesses(child)
+        owned.refresh()
+        # An unverifiable historical PID must not be signaled, but must not
+        # prevent verified live work and the dedicated group from being stopped.
+        unknown = 2147483647
+        owned.identities[unknown] = 17
+        original = guard.process_identity
+        def unreadable(pid):
+            if pid == unknown:
+                raise RuntimeError('injected identity failure')
+            return original(pid)
+        try:
+            with patch.object(guard, 'process_identity', side_effect=unreadable), \
+                 patch.object(guard.os, 'kill', wraps=os.kill) as kill:
+                with self.assertRaisesRegex(RuntimeError, 'unverifiable'):
+                    guard.stop_group(owned, delays=(.1, .1, .1))
+                self.assertIsNotNone(child.poll())
+                self.assertNotIn(unknown, [call.args[0] for call in kill.call_args_list])
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait()
+
+    def test_identity_failure_still_discovers_new_detached_worker(self):
+        with scratch_directory(prefix='plico-cleanup-discovery-') as temp:
+            marker = Path(temp) / 'worker'
+            payload = ("import pathlib,subprocess,sys,time; "
+                       "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(20)'],start_new_session=True); "
+                       f"pathlib.Path({str(marker)!r}).write_text(str(child.pid)); time.sleep(20)")
+            child = subprocess.Popen([sys.executable, '-c', payload],
+                                     start_new_session=True, stderr=subprocess.DEVNULL)
+            owned = guard.OwnedProcesses(child)
+            original = guard.process_identity
+            owned.identities[child.pid] = original(child.pid)
+            unknown = 2147483647
+            owned.identities[unknown] = 17
+            worker = None
+            try:
+                wait_until(marker.exists)
+                worker = int(marker.read_text())
+                worker_identity = original(worker)
+                self.assertIsNotNone(worker_identity)
+                def unreadable(pid):
+                    if pid == unknown: raise RuntimeError('injected identity failure')
+                    return original(pid)
+                with patch.object(guard, 'process_identity', side_effect=unreadable):
+                    with self.assertRaisesRegex(RuntimeError, 'unverifiable'):
+                        guard.stop_group(owned, delays=(.1, .1, .1))
+                self.assertIsNotNone(child.poll())
+                wait_until(lambda: original(worker) != worker_identity, timeout=1)
+            finally:
+                if worker is not None and original(worker) == worker_identity:
+                    os.kill(worker, signal.SIGKILL)
+                if child.poll() is None:
+                    child.kill()
+                    child.wait()
+
+    def test_unidentified_new_worker_is_not_forgotten_after_parent_exits(self):
+        child = SimpleNamespace(pid=123, returncode=None)
+        owned = guard.OwnedProcesses(child)
+        owned.identities[123] = 1
+        def identity(pid):
+            if pid == 200: raise RuntimeError('new worker identity unavailable')
+            return 1 if pid == 123 else None
+        with patch.object(guard, 'process_identity', side_effect=identity), \
+             patch.object(guard, 'process_tree', return_value={123, 200}):
+            with self.assertRaises(RuntimeError):
+                owned.refresh()
+        child.returncode = 0
+        # The parent's death removes the only current lineage evidence. Even
+        # a now-readable reused PID must not be promoted to owned work.
+        with patch.object(guard, 'process_identity', side_effect=lambda pid: 99 if pid == 200 else None), \
+             patch.object(guard, 'process_tree', return_value=set()), \
+             patch.object(guard.os, 'kill') as kill, \
+             patch.object(guard.os, 'killpg') as killpg:
+            self.assertEqual(owned.refresh(tolerate_errors=True), set())
+            self.assertIn(200, owned.identity_errors)
+            self.assertEqual(owned.known_live(tolerate_errors=True), set())
+            self.assertIn(200, owned.identity_errors)
+            owned.signal(signal.SIGTERM)
+            kill.assert_not_called()
+            killpg.assert_not_called()
+        with patch.object(guard, 'process_identity', return_value=None):
+            self.assertEqual(owned.known_live(), set())
+            self.assertEqual(owned.identity_errors, {})
+
+    def test_monitor_identity_error_records_failure_and_cleans_child(self):
+        overrides = r"""
+original_identity = guard.process_identity
+original_refresh = guard.OwnedProcesses.refresh
+unknown = 2147483647
+def failing_identity(pid):
+    if pid == unknown: raise RuntimeError('injected identity failure')
+    return original_identity(pid)
+guard.process_identity = failing_identity
+def fail_after_observation(self, **kwargs):
+    live = original_refresh(self, **kwargs)
+    self.identities[unknown] = 17
+    return live
+guard.OwnedProcesses.refresh = fail_after_observation
+original_stop = guard.stop_group
+guard.stop_group = lambda owned: original_stop(owned, delays=(.1, .1, .1))
+original_popen = guard.subprocess.Popen
+def track_child(*a, **kw):
+    child = original_popen(*a, **kw)
+    if kw.get('start_new_session'):
+        from pathlib import Path
+        (Path(sys.argv[-1]) / 'pid-spawned').write_text(f'{child.pid}:{original_identity(child.pid)}')
+    return child
+guard.subprocess.Popen = track_child
+original_status = guard.write_status
+def record_status(path, **values):
+    if values.get('state') == 'cleanup_error': print('cleanup_error recorded', file=sys.stderr)
+    return original_status(path, **values)
+guard.write_status = record_status
+"""
+        code, stderr = self.run_guard('import time; time.sleep(20)', overrides=overrides,
+                                      expected_state='cleanup_error')
+        self.assertNotEqual(code, 0)
+        self.assertIn('cleanup_error recorded', stderr)
 
     def test_reused_root_does_not_capture_unrelated_descendants(self):
         class Exited:

@@ -57,11 +57,20 @@ try:
     else:
         raise RuntimeError('Probe did not run: ' + (log.read_text() if log.exists() else 'no log'))
     assert state['independent']
+    import re
+    service_description = subprocess.check_output(['/bin/launchctl', 'print', service], text=True)
+    service_pid = int(re.search(r'^\s*pid = (\d+)\s*$', service_description, re.MULTILINE)[1])
+    assert service_pid == state['pid'], 'launchd PID does not identify the guard'
     for pid in (state['pid'], state['child_pid']):
         identities[pid] = guard.process_identity(pid)
         assert identities[pid] is not None
     # The bootstrap caller has returned, but the launchd-owned job remains live.
-    time.sleep(1)
+    initial_sample = state['time']
+    deadline = time.monotonic() + 8
+    while json.loads(status.read_text())['time'] <= initial_sample:
+        if time.monotonic() >= deadline:
+            raise RuntimeError('Running guard did not refresh its status')
+        time.sleep(.1)
     assert all(guard.process_identity(pid) == identity for pid, identity in identities.items())
     subprocess.run(['/bin/launchctl', 'bootout', service], check=True)
     loaded = False
@@ -71,7 +80,7 @@ try:
             raise RuntimeError('Owned probe process survived launchd stop')
         time.sleep(.1)
     report = {'launchd_independent_ancestry': True, 'survived_bootstrap_caller': True,
-              'guard_and_payload_cleaned_up': True, 'large_allocation': False,
+              'guard_and_payload_cleaned_up': True, 'running_status_refreshed': True, 'launchd_pid_matches_guard': True, 'large_allocation': False,
               'pressure_samples': 'simulated only for this harmless probe',
               'status': json.loads(status.read_text())}
     (OUT / 'launchd-qualification.json').write_text(json.dumps(report, indent=2) + '\n')

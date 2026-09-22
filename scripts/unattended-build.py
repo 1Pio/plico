@@ -9,6 +9,7 @@ from pathlib import Path
 import plistlib
 import re
 import subprocess
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 LABEL = 'dev.plico.guarded-build'
@@ -25,6 +26,27 @@ def service_state():
         return {'loaded': False, 'pid': None}
     match = re.search(r'^\s*pid = (\d+)\s*$', result.stdout, re.MULTILINE)
     return {'loaded': True, 'pid': int(match[1]) if match else None}
+
+
+def supervision_health(service, record, now=None):
+    """A historical running record is not proof of a live monitor."""
+    now = time.time() if now is None else now
+    if record is None:
+        return {'health': 'starting' if service.get('pid') else 'unavailable'}
+    age = max(0, now - record.get('time', 0))
+    state = record.get('state')
+    if service.get('pid') and service['pid'] != record.get('pid'):
+        health = 'starting'
+    elif state in ('running', 'waiting'):
+        if not service.get('pid'):
+            health = 'supervision_lost'
+        elif age > 10:
+            health = 'stale'
+        else:
+            health = state
+    else:
+        health = state or 'unavailable'
+    return {'health': health, 'status_age_seconds': round(age, 1)}
 
 
 def job_definition(jobs, wait_seconds, runtime_seconds, log):
@@ -74,7 +96,8 @@ def execute(args):
     state = service_state()
     if args.action == 'status':
         path = LOGS / 'unattended-status.json'
-        print(json.dumps({**state, 'guard': json.loads(path.read_text()) if path.exists() else None}, indent=2))
+        record = json.loads(path.read_text()) if path.exists() else None
+        print(json.dumps({**state, **supervision_health(state, record), 'guard': record}, indent=2))
         return
     if args.action == 'stop':
         if state['loaded']:

@@ -95,13 +95,19 @@ def system_memory():
     return int(free_match[1]), used
 
 
-def process_tree(group, seeds=(), identities=None):
+def process_tree(group, seeds=(), identities=None, *, identity_errors=None):
     # Read process IDs only. Do not capture unrelated apps' command arguments.
     output = subprocess.check_output(["/bin/ps", "-axo", "pid=,ppid=,pgid="], text=True)
     rows = [tuple(map(int, line.split())) for line in output.splitlines() if line.strip()]
     identities = identities or {}
     def same_process(pid):
-        return pid not in identities or process_identity(pid) == identities[pid]
+        try:
+            return pid not in identities or process_identity(pid) == identities[pid]
+        except Exception as error:
+            if identity_errors is None:
+                raise
+            identity_errors[pid] = str(error)
+            return False
     tree = {pid for pid, parent, pgid in rows
             if (pgid == group or pid in seeds) and same_process(pid)}
     while True:
@@ -182,7 +188,7 @@ def process_identity(pid):
         return None if data.proc_exit_abstime else data.proc_start_abstime
     if ctypes.get_errno() == 3:
         return None
-    raise RuntimeError(f"Cannot identify build process {pid}.")
+    raise RuntimeError(f"Cannot identify build process {pid}: errno {ctypes.get_errno()}.")
 
 
 class OwnedProcesses:
@@ -190,10 +196,42 @@ class OwnedProcesses:
     def __init__(self, child):
         self.child = child
         self.identities = {}
+        self.unverified = {}
+        self.identity_errors = {}
 
-    def known_live(self):
-        return {pid for pid, identity in self.identities.items()
-                if process_identity(pid) == identity}
+    def known_live(self, *, tolerate_errors=False):
+        live = set()
+        self.identity_errors = {}
+        for pid in list(self.unverified):
+            try:
+                current = process_identity(pid)
+            except Exception as error:
+                self.unverified[pid] = str(error)
+            else:
+                if current is None:
+                    del self.unverified[pid]
+            # A now-readable PID alone cannot prove prior ownership. Only fresh
+            # lineage discovery below can establish an identity; otherwise keep
+            # reporting incomplete cleanup until the ambiguous PID disappears.
+            if pid in self.unverified:
+                self.identity_errors[pid] = self.unverified[pid]
+        for pid, identity in list(self.identities.items()):
+            try:
+                current = process_identity(pid)
+            except Exception as error:
+                # Monitoring still fails closed. During cleanup, one unreadable
+                # PID must not prevent stopping every other verified worker.
+                self.identity_errors[pid] = str(error)
+                continue
+            if current == identity:
+                live.add(pid)
+            else:
+                # Exited and reused PIDs are no longer ours. Keeping all past
+                # compiler PIDs both grows sampling cost and revisits strangers.
+                del self.identities[pid]
+        if self.identity_errors and not tolerate_errors:
+            raise RuntimeError(f"Cannot verify owned process identities: {self.identity_errors}")
+        return live
 
     def owns_original_group(self, live):
         # Before wait/poll reaps the child, its PID cannot be reused. Afterward
@@ -208,24 +246,37 @@ class OwnedProcesses:
                 pass
         return False
 
-    def refresh(self):
-        live = self.known_live()
+    def refresh(self, *, tolerate_errors=False):
+        live = self.known_live(tolerate_errors=tolerate_errors)
         group = self.child.pid if self.owns_original_group(live) else None
-        for pid in process_tree(group, live, self.identities):
-            identity = process_identity(pid)
+        for pid in process_tree(group, live, self.identities,
+                                identity_errors=self.identity_errors if tolerate_errors else None):
+            try:
+                identity = process_identity(pid)
+            except Exception as error:
+                if pid not in self.identities:
+                    self.unverified[pid] = str(error)
+                self.identity_errors[pid] = str(error)
+                if not tolerate_errors:
+                    raise
+                continue
             if identity is not None:
                 self.identities.setdefault(pid, identity)
                 if self.identities[pid] == identity:
+                    self.unverified.pop(pid, None)
+                    self.identity_errors.pop(pid, None)
                     live.add(pid)
         return live
 
     def signal(self, sig):
         try:
-            live = self.refresh()
+            # Discover new detached workers before signaling their scheduler,
+            # even when another retained identity is temporarily unreadable.
+            live = self.refresh(tolerate_errors=True)
         except Exception as error:
             # Discovery failure must not prevent cleanup of already-owned work.
             print(f"Process discovery failed during cleanup: {error}", file=sys.stderr)
-            live = self.known_live()
+            live = self.known_live(tolerate_errors=True)
         # Group signaling also covers a newly spawned worker between snapshots.
         # The group is dedicated to this child; Codex is in a different group.
         if self.owns_original_group(live):
@@ -234,7 +285,12 @@ class OwnedProcesses:
             except ProcessLookupError:
                 pass
         for pid in live:
-            if process_identity(pid) == self.identities[pid]:
+            try:
+                identity = process_identity(pid)
+            except Exception as error:
+                self.identity_errors[pid] = str(error)
+                continue
+            if identity == self.identities[pid]:
                 try:
                     os.kill(pid, sig)
                 except ProcessLookupError:
@@ -249,18 +305,19 @@ def stop_group(owned, delays=(10, 5, 5)):
         deadline = time.monotonic() + delay
         while True:
             try:
-                live = owned.refresh()
+                live = owned.refresh(tolerate_errors=True)
             except Exception:
-                live = owned.known_live()
+                live = owned.known_live(tolerate_errors=True)
             owned.child.poll()
-            if not live:
+            if not live and not owned.identity_errors and owned.child.returncode is not None:
                 return
             if time.monotonic() >= deadline:
                 break
             time.sleep(0.1)
-    survivors = owned.known_live()
-    if survivors:
-        raise RuntimeError(f"Build processes survived shutdown: {sorted(survivors)}")
+    survivors = owned.known_live(tolerate_errors=True)
+    if survivors or owned.identity_errors or owned.child.poll() is None:
+        raise RuntimeError(f"Build cleanup incomplete; surviving processes: {sorted(survivors)}; "
+                           f"unverifiable identities: {owned.identity_errors}")
 
 
 def main():
@@ -385,6 +442,8 @@ def main():
                     "processes": count, "free_percent": free, "swap_mib": swap,
                     "host_mib": round(host_mib, 1) if host_mib is not None else None,
                     "kernel_pressure": pressure, "independent": args.independent}) + "\n")
+                write_status(args.status, state="running", child_pid=child.pid,
+                             independent=args.independent)
                 reason = breach(free, swap, minimum_swap, usage, args, host_mib, pressure)
                 if not reason and args.require_ac_power and not on_ac_power():
                     reason = "AC power disconnected"
@@ -402,7 +461,13 @@ def main():
         outcome, exit_code = "monitor_error", 1
         raise
     finally:
-        stop_group(owned)
+        try:
+            stop_group(owned)
+        except BaseException as error:
+            write_status(args.status, state="cleanup_error", exit_code=1,
+                         monitor_outcome=outcome, reason=str(error),
+                         elapsed_seconds=round(time.monotonic() - started, 1))
+            raise
         result = exit_code if exit_code is not None else (128 + interrupted[0] if interrupted else child.returncode)
         write_status(args.status, state=outcome, exit_code=result,
                      elapsed_seconds=round(time.monotonic() - started, 1))

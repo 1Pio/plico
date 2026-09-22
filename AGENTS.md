@@ -48,6 +48,9 @@ on CPU count, independent of the outer build job count.
   app families under the same 14 GiB ceiling, including after an app restart.
   Kernel Warning/Critical pressure also prevents startup or stops a running job.
   The macOS sysctl returns dispatch flags 1/2/4, not the internal XNU enum.
+- Verify the controller health and freshness of guard telemetry, not only a
+  recorded `running` state. A missing supervisor or stale samples requires
+  immediate owned-worker inspection and cleanup before any restart.
 - A headroom-waiting job holds the guard lock. Stop it before changing generated
   sources or applying overlays, since it may otherwise begin compiling.
 - Do not bypass the guard with `dev.sh`, `he`, `autoninja`, or direct Siso builds.

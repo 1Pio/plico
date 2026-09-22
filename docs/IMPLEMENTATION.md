@@ -566,3 +566,33 @@ per invocation. Switching tools or bypassing the wrapper would not preserve
 verified incremental state. No migration, log fabrication, cleaning or threshold
 change has been performed. The next build-system experiment needs a specific
 change supported by evidence, rather than another repetition of the stopped run.
+
+
+### Process-identity failure and cleanup repair, 2026-09-22
+
+A native process-identity lookup failed during a long compilation. The cleanup
+fallback called the same failing lookup and exited before stopping the owned
+scheduler. The status file retained its historical running state while telemetry
+stopped. On discovery, the owned scheduler and its observed workers were stopped,
+all observed identities were verified absent, and the launchd job was unloaded.
+Incremental output was preserved. Memory behavior during the telemetry gap is
+unknown; compiler progress does not establish that monitoring remained active.
+
+The guard now drops identities once their processes exit or are replaced. A
+lookup error still stops normal monitoring, but cleanup processes the other
+verified identities and the owned process group before reporting any unverifiable
+survivors. It never signals a PID whose identity cannot be verified. Cleanup
+failures write an explicit terminal status. Running status refreshes with each
+sample, and the controller distinguishes a missing supervisor or stale status
+from live supervision. Resource thresholds and compiler configuration are unchanged.
+
+The original failure and review findings have regression coverage demonstrated
+against the faulty paths. The final 23-case low-allocation guard suite and four
+controller checks pass under the build's Python runtime. A live launchd probe
+confirms independent ancestry, supervisor PID matching, refreshed status and
+cleanup on unload. Independent review also exposed missed newly spawned workers
+and lost unresolved discovery records; both were fixed and covered before the
+follow-up review found no remaining scoped issue. Unverifiable workers remain
+explicitly unresolved until disappearance or fresh ownership evidence. Detailed
+verification stays in ignored local records. No real-browser acceptance is
+implied by these tests.
