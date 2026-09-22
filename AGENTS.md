@@ -12,10 +12,12 @@ on CPU count, independent of the outer build job count.
 
 - Use `scripts/build.sh` for compilation. It defaults to two local jobs and wraps
   the entire build tree in `scripts/memory-guard.py`. The user authorized measured
-  parallelism increases. Two jobs are the selected unattended setting; the
-  three-job trial reached 5.6 GiB, close to the 6 GiB stop threshold. Use three
-  only for a guarded calibration of at most 600 seconds, and one as a
-  lower-memory fallback. Do not raise memory thresholds to make a trial fit.
+  parallelism increases. The current unattended run uses one job after a
+  two-job run reached the unchanged 6 GiB build cap. The earlier three-job
+  trial reached 5.6 GiB. Do not restart with the wrapper's two-job default
+  blindly; inspect the latest checkpoint and allocation evidence. Three jobs
+  remain limited to a guarded calibration of at most 600 seconds. Do not
+  raise memory thresholds to make a trial fit.
   Use explicit Siso `-local_jobs`, because autoninja may ignore `-j > 1` under
   the required `PYTHON_CPU_COUNT=1` generator safeguard.
 - Keep `PYTHON_CPU_COUNT=1`, Node's heap limit at 2048 MiB, and the guard active.

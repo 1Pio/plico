@@ -542,3 +542,27 @@ readable. Cloud collection still needs to verify the corrected summary step.
 Independent review caught uncaught invalid-DEFLATE and wrong-wire-type errors;
 the reader now rejects them predictably and the rolling-file fallback regression
 passes. The follow-up review found no remaining issue in that scope.
+
+### Heap attribution result and current build strategy
+
+The corrected [heap diagnostic](https://github.com/1Pio/plico/actions/runs/35674929028)
+collected and summarized both final complete samples successfully. The browser
+dry run still hit its unchanged 3,072 MiB guard. The final sampled Go heap was
+2,731 MiB, including 554 MiB attributed directly to dependency records, 307 MiB
+to manifest loading, 305 MiB to parser slabs, 213 MiB to target scheduling and
+146 MiB to graph edges. These are sampled heap allocations, not an exact
+physical-footprint decomposition or a completed browser graph.
+
+This supports substantial build-graph overhead, rather than excessive compiler
+concurrency: the diagnostic compiled nothing. Repeating this whole-graph probe
+with the same build tool/configuration is not justified. The healthy independent
+component build remains the delivery path for now, with checkpoint data preserved
+for later reuse qualification. No cloud relink or browser-wide reuse is claimed.
+
+Native Ninja is also not a drop-in cache migration: the pinned
+[Siso log writer](https://chromium.googlesource.com/build/+/bc45e8f67ae0f37d337190ad64aa8bb440c791eb/siso/toolsupport/ninjautil/ninja_log.go)
+explicitly uses an incompatible command hash and truncates the Ninja-format log
+per invocation. Switching tools or bypassing the wrapper would not preserve
+verified incremental state. No migration, log fabrication, cleaning or threshold
+change has been performed. The next build-system experiment needs a specific
+change supported by evidence, rather than another repetition of the stopped run.
