@@ -11,6 +11,11 @@ on:
         options:
           - objects
           - browser
+      profile_memory:
+        description: Capture bounded Siso heap profiles to diagnose its memory use
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -112,6 +117,7 @@ jobs:
       - name: Diagnose selected retained dependency graph without compiling
         env:
           PROBE_SCOPE: ${{ inputs.scope }}
+          PROFILE_MEMORY: ${{ inputs.profile_memory }}
         working-directory: build/reuse-qualification/restored/src
         run: |
           ROOT="$GITHUB_WORKSPACE"
@@ -120,10 +126,16 @@ jobs:
             browser) targets=(chrome chromedriver) ;;
             *) echo 'Unknown probe scope' >&2; exit 2 ;;
           esac
+          profile_flags=()
+          case "$PROFILE_MEMORY" in
+            true) profile_flags=(-memprofile="$ROOT/build/reuse-qualification/siso-memory.pprof" -memprofile_interval=5s -memprofile_gc=false) ;;
+            false) ;;
+            *) echo 'Unknown memory profile option' >&2; exit 2 ;;
+          esac
           python3 "$ROOT/scripts/memory-guard.py" \
             --log "$ROOT/build/logs/cloud-dryrun-memory.jsonl" \
             --max-build-mib 3072 --max-runtime-seconds 300 -- \
-            third_party/siso/cipd/siso ninja -offline -n -C out/Default \
+            third_party/siso/cipd/siso "${profile_flags[@]}" ninja -offline -n -C out/Default \
             -local_jobs=1 -fs_state_compression_threads=1 -d explain \
             "${targets[@]}" \
             > "$ROOT/build/reuse-qualification/cloud-dryrun.log" 2>&1
@@ -165,4 +177,27 @@ jobs:
               print('compiler_samples', json.dumps(compiler_samples))
               print('diagnostics', json.dumps(diagnostics))
               print('\n'.join(lines))
+          PYTHON
+      - name: Summarize retained heap samples without uploading profiles
+        if: always() && inputs.profile_memory
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          python3 - <<'PYTHON'
+          import os, shutil, subprocess
+          from pathlib import Path
+          profiles = sorted(Path('build/reuse-qualification').glob('siso-memory.*.pprof'))
+          go = shutil.which('go')
+          print('heap_samples', len(profiles), 'go_available', bool(go))
+          if not go:
+              raise SystemExit('Runner Go tool is unavailable; no heap analysis claimed')
+          for path in profiles[-2:]:
+              print('heap_sample', path.name, path.stat().st_size, flush=True)
+              subprocess.run([
+                  'python3', 'scripts/memory-guard.py',
+                  '--log', 'build/logs/cloud-heap-analysis-memory.jsonl',
+                  '--max-build-mib', '3072', '--max-runtime-seconds', '60', '--',
+                  go, 'tool', 'pprof', '-top', '-sample_index=inuse_space',
+                  '-nodecount=12', '-unit=MB', str(path)
+              ], check=True, env={**os.environ, 'GOTOOLCHAIN': 'local'})
           PYTHON

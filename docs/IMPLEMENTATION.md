@@ -511,3 +511,19 @@ verified original Xcode alias for regeneration and expands to the browser graph.
 This is a new test after two demonstrated causes were corrected, not a repeat
 of the earlier uncorrected full-graph runs. It remains a dry run with the same
 resource cap and timeout, and changes no developer-Mac source or build output.
+
+The expanded browser-graph diagnostic [35671413095](https://github.com/1Pio/plico/actions/runs/35671413095)
+stopped at the unchanged 3,072 MiB cap. The parent Siso process accounted for
+3,064 MiB of the 3,078 MiB aggregate. It had skipped 31,043 actions, but the
+graph was incomplete, so no full-browser reuse ratio can be inferred. Matching
+the Xcode path reduced toolchain differences from 82 lines to 58; remaining
+differences include the source checkout's absolute path and its depth.
+
+The pinned Siso implementation reads the whole legacy dependency log and expands
+its 32-bit input IDs into native integer slices. The upstream log is about
+579 MB. This suggests a significant fixed allocation, but does not establish
+the observed peak's full cause. The workflow can now collect periodic heap
+profiles without forcing garbage collection and print the last two bounded
+allocation summaries under the same guard. It uploads no profile artifacts and
+changes no memory limits. Diagnose the allocations before another build strategy.
+Source: [pinned dependency-log reader](https://chromium.googlesource.com/build/+/bc45e8f67ae0f37d337190ad64aa8bb440c791eb/siso/toolsupport/ninjautil/deps_log.go).
