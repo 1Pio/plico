@@ -494,3 +494,20 @@ source path. Thus timestamp repair alone is insufficient. A follow-up recreates
 those paths only as checked aliases inside the disposable runner, including the
 matching Xcode bundle path. It refuses to replace any existing different target.
 Dependency records, object bytes and the developer's installed SDK remain intact.
+
+### Checkpoint path repair and bounded reuse evidence
+
+Free matching-SDK run `35669243644` completed the same three-object dry run
+after hash-verified timestamp repair and checked original-path aliases. The
+compiler command count fell from 2,063 to zero; simulated actions fell from
+2,481 to 380. This establishes useful reuse for that dependency sample, not a
+linked Plico application or complete build reuse. The dry run peaked at
+2,387 MiB within the unchanged 3,072 MiB cloud guard.
+
+Some Rust/library outputs and generated files still invalidate. Regeneration
+also changes 82 toolchain lines because Xcode is addressed through a different
+application path despite the exact matching SDK. The next diagnostic uses the
+verified original Xcode alias for regeneration and expands to the browser graph.
+This is a new test after two demonstrated causes were corrected, not a repeat
+of the earlier uncorrected full-graph runs. It remains a dry run with the same
+resource cap and timeout, and changes no developer-Mac source or build output.

@@ -1,6 +1,16 @@
 name: Qualify upstream checkpoint on matching macOS SDK
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Dependency graph to diagnose without compilation
+        required: true
+        type: choice
+        default: objects
+        options:
+          - objects
+          - browser
 
 permissions:
   contents: read
@@ -60,6 +70,8 @@ jobs:
           assert original_xcode.resolve(strict=True) == xcode
           print('Original source and exact-version Xcode paths resolve to the verified inputs')
           PYTHON
+          echo 'DEVELOPER_DIR=/Applications/Xcode_26.app/Contents/Developer' >> "$GITHUB_ENV"
+          test "$(DEVELOPER_DIR=/Applications/Xcode_26.app/Contents/Developer xcrun --sdk macosx --show-sdk-build-version)" = 25A352
       - name: Preserve selected original manifests for comparison
         run: |
           python3 - <<'PYTHON'
@@ -97,17 +109,23 @@ jobs:
                                 'regenerated_sha256': hashlib.sha256(after.encode()).hexdigest(),
                                 'changed_lines': len(changes), 'sample': [s[:500] for s in changes[:8]]}))
           PYTHON
-      - name: Diagnose three representative retained objects without compiling
+      - name: Diagnose selected retained dependency graph without compiling
+        env:
+          PROBE_SCOPE: ${{ inputs.scope }}
         working-directory: build/reuse-qualification/restored/src
         run: |
           ROOT="$GITHUB_WORKSPACE"
+          case "$PROBE_SCOPE" in
+            objects) targets=(obj/base/base/string_util.o obj/ui/gfx/geometry/geometry/rect.o obj/net/net/net_errors.o) ;;
+            browser) targets=(chrome chromedriver) ;;
+            *) echo 'Unknown probe scope' >&2; exit 2 ;;
+          esac
           python3 "$ROOT/scripts/memory-guard.py" \
             --log "$ROOT/build/logs/cloud-dryrun-memory.jsonl" \
             --max-build-mib 3072 --max-runtime-seconds 300 -- \
             third_party/siso/cipd/siso ninja -offline -n -C out/Default \
             -local_jobs=1 -fs_state_compression_threads=1 -d explain \
-            obj/base/base/string_util.o obj/ui/gfx/geometry/geometry/rect.o \
-            obj/net/net/net_errors.o \
+            "${targets[@]}" \
             > "$ROOT/build/reuse-qualification/cloud-dryrun.log" 2>&1
       - name: Retain bounded evidence in logs only
         if: always()
@@ -127,16 +145,24 @@ jobs:
               diagnostics = []
               count = 0
               commands = Counter()
+              compiler_samples = []
               with path.open(errors='replace') as stream:
                   for line in stream:
                       count += 1
                       line = line.rstrip()
                       if line.startswith('sccache '):
                           commands['compiler_commands'] += 1
+                          if len(compiler_samples) < 12:
+                              compiler_samples.append(line[-600:])
+                      if 'clang++' in line and ' -o ' in line and not line.startswith('ninja explain:'):
+                          commands['clang_cpp_lines'] += 1
+                      if 'rustc_wrapper.py' in line and not line.startswith('ninja explain:'):
+                          commands['rust_commands'] += 1
                       if ('explain:' in line or 'dirty' in line or 'changed' in line) and len(diagnostics) < 35:
                           diagnostics.append(line[:500])
                       lines.append(line[:500])
               print('dry_run_lines', count, 'command_counts', dict(commands))
+              print('compiler_samples', json.dumps(compiler_samples))
               print('diagnostics', json.dumps(diagnostics))
               print('\n'.join(lines))
           PYTHON
